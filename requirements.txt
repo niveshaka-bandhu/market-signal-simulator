@@ -1,5 +1,8 @@
 streamlit
-yfinance>=0.2.64
+yfinance
 pandas
+numpy
 plotly
 curl_cffi
+openscreener
+playwright
