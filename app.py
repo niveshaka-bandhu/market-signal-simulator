@@ -130,6 +130,10 @@ def load_screener_data_light(ticker):
                     value = value_span.text.strip().replace('\n', '').replace('  ', ' ')
                     ratios[name] = value
 
+        # Cloudflare / Element parse verification check
+        if not ratios:
+            return {"success": False, "error": "Cloudflare bypass active or structure has changed."}
+
         # Parse Pros and Cons
         pros = []
         cons = []
@@ -460,81 +464,75 @@ if yfinance_ticker:
                 # ==========================================
                 with tab4:
                     st.subheader("💎 Valuation Models & Intrinsic Calculations")
-                    st.info("💡 **Bonus/Split Adjustments:** Automated databases can lag by several weeks updating EPS and Book Value post-corporate actions. Use the configuration box below to align metrics manually if they appear unadjusted.")
-
-                    screener_ratios = screener_data.get("ratios", {}) if screener_data.get("success") else {}
                     
-                    # 1. Extract automated variables
+                    screener_ratios = screener_data.get("ratios", {}) if (screener_data and screener_data.get("success")) else {}
+                    
+                    # 1. LATEST CLOSE (CMP)
+                    cmp = float(latest_close)
+
+                    # 2. Extract raw ratios from Screener if success, else set baseline None
                     auto_pe = extract_ratio_value(screener_ratios, ["stock_p_e", "pe", "p_e"])
                     auto_bv = extract_ratio_value(screener_ratios, ["book_value", "bvps"])
                     auto_mcap = extract_ratio_value(screener_ratios, ["market_cap", "m_cap"])
                     auto_pb = extract_ratio_value(screener_ratios, ["price_to_book", "pb", "p_b"])
                     
-                    # Fallback default values (Calibrated for RELIANCE's post-bonus metrics)
+                    # Fallback defaults for Reliance if fully blocked and unadjusted
                     fallback_pe = 23.1 if "RELIANCE" in yfinance_ticker else 20.0
                     fallback_bv = 668.0 if "RELIANCE" in yfinance_ticker else 150.0
-                    
-                    # Resolve auto values
-                    if not auto_pe and stock_info.get('trailingPE'):
-                        auto_pe = float(stock_info.get('trailingPE'))
-                    if not auto_bv and stock_info.get('bookValue'):
-                        auto_bv = float(stock_info.get('bookValue'))
 
-                    # --- MANUAL OVERRIDE INTERFACE PANEL ---
-                    st.markdown("### 🛠️ Calibration Panel")
-                    use_override = st.checkbox(
-                        "**Enable Manual Calibration Override** (Overrules APIs to resolve stale metrics)", 
-                        value=True if not screener_data.get("success") else False
-                    )
-                    
-                    col_ov1, col_ov2, col_ov3 = st.columns(3)
-                    
-                    if use_override:
-                        pe_input_val = col_ov1.number_input("P/E Ratio", value=float(auto_pe if auto_pe else fallback_pe), step=0.1, format="%.2f")
-                        bvps_input_val = col_ov2.number_input("Book Value Per Share (BVPS)", value=float(auto_bv if auto_bv else fallback_bv), step=1.0, format="%.2f")
-                        cmp_input_val = col_ov3.number_input("Current Market Price (CMP)", value=float(latest_close), step=1.0, format="%.2f")
+                    # 3. Resolve Automated PE
+                    derived_pe = None
+                    if auto_pe and auto_pe > 0:
+                        derived_pe = auto_pe
+                    elif stock_info.get('trailingPE') and stock_info.get('trailingPE') > 0:
+                        derived_pe = float(stock_info.get('trailingPE'))
                         
-                        # Dynamic calculations based on manual input overrides
-                        cmp = cmp_input_val
-                        derived_bvps = bvps_input_val
-                        calculated_eps = cmp / pe_input_val if pe_input_val > 0 else 1.0
+                    # 4. Resolve Automated EPS
+                    if derived_pe and derived_pe > 0:
+                        auto_eps = cmp / derived_pe
                     else:
-                        # Fallback to pure automated discovery
-                        cmp = float(latest_close)
-                        if auto_pe:
-                            calculated_eps = cmp / auto_pe
-                        else:
-                            calculated_eps = float(stock_info.get('trailingEps', 25.0)) if stock_info.get('trailingEps') else 25.0
-                            
-                        if auto_bv:
-                            derived_bvps = auto_bv
-                        else:
-                            derived_pb = auto_pb if auto_pb else (float(stock_info.get('priceToBook')) if stock_info.get('priceToBook') else None)
-                            derived_bvps = cmp / derived_pb if derived_pb else (float(stock_info.get('bookValue', 150.0)) if stock_info.get('bookValue') else 150.0)
+                        auto_eps = float(stock_info.get('trailingEps', 25.0)) if stock_info.get('trailingEps') else 25.0
                         
-                        col_ov1.metric("Current P/E Ratio (Auto)", f"{cmp/calculated_eps:.2f}" if calculated_eps > 0 else "N/A")
-                        col_ov2.metric("BVPS (Auto)", f"₹{derived_bvps:,.2f}")
-                        col_ov3.metric("CMP (Auto)", f"₹{cmp:,.2f}")
-                        
-                        st.caption(f"Status: Using Automated Pipeline. (Screener.in Connection: {'✅ Online' if screener_data.get('success') else '❌ Offline/Blocked'})")
+                    # 5. Resolve Automated BVPS
+                    if auto_bv and auto_bv > 0:
+                        auto_bvps = auto_bv
+                    else:
+                        derived_pb = auto_pb if auto_pb else (float(stock_info.get('priceToBook')) if stock_info.get('priceToBook') else None)
+                        auto_bvps = cmp / derived_pb if derived_pb else (float(stock_info.get('bookValue', 150.0)) if stock_info.get('bookValue') else 150.0)
 
-                    # Recalculate share quantities
+                    # 6. MCAP & Share calculations
                     derived_mcap = auto_mcap * 10000000 if auto_mcap else float(stock_info.get('marketCap', 100000000000.0)) if stock_info.get('marketCap') else 100000000000.0
                     derived_shares = derived_mcap / cmp
+
+                    # --- ACTIVE API SYNC STATUS INDICATOR ---
+                    if screener_data.get("success"):
+                        st.success("📡 **Live API Sync:** Screener.in ratios parsed successfully.")
+                    else:
+                        st.warning(f"⚠️ **Screener.in API Blocked:** Falling back to unadjusted Yahoo metrics. Please check the values below and override them if they are stale due to recent splits/bonuses.")
 
                     st.markdown("---")
                     calc_col1, calc_col2 = st.columns(2)
 
-                    # --- MODEL A: BENJAMIN GRAHAM VALUE ---
+                    # --- MODEL A: BENJAMIN GRAHAM VALUE (DYNAMIC & EDITABLE) ---
                     with calc_col1:
                         st.markdown("### 🏛️ Graham's Fair Value Model")
-                        st.write("Assesses asset-to-earnings consistency for mature companies.")
+                        st.write("Adjust variables directly below to align with current filings (e.g., EPS: 57.00, BVPS: 668.00).")
                         
-                        eps_display = st.number_input("Earnings Per Share (EPS)", value=float(calculated_eps), format="%.2f")
-                        bvps_display = st.number_input("Book Value Per Share (BVPS)", value=float(derived_bvps), format="%.2f")
+                        eps_input = st.number_input(
+                            "Earnings Per Share (EPS)", 
+                            value=float(auto_eps), 
+                            format="%.2f",
+                            help="Manually override if APIs display stale unadjusted EPS."
+                        )
+                        bvps_input = st.number_input(
+                            "Book Value Per Share (BVPS)", 
+                            value=float(auto_bvps), 
+                            format="%.2f",
+                            help="Manually override if APIs display stale unadjusted Book Value."
+                        )
                         
-                        if eps_display > 0 and bvps_display > 0:
-                            graham_fair_value = np.sqrt(22.5 * eps_display * bvps_display)
+                        if eps_input > 0 and bvps_input > 0:
+                            graham_fair_value = np.sqrt(22.5 * eps_input * bvps_input)
                             graham_mos = ((graham_fair_value - cmp) / graham_fair_value) * 100
                             
                             st.markdown(f"#### Calculated Graham Value: **₹{graham_fair_value:,.2f}**")
