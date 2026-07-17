@@ -2,9 +2,17 @@ import streamlit as st
 import yfinance as yf
 import pandas as pd
 import plotly.graph_objects as go
-import requests  # Add this import at the top
+import requests
 
-# --- ADD THIS HELPER FUNCTION ---
+# 1. Page Configuration
+st.set_page_config(page_title="Algorithmic Trading Dashboard", layout="wide")
+st.title("📈 Algorithmic Trading & Backtesting Dashboard")
+
+# --- SIDEBAR: Global User Inputs ---
+st.sidebar.header("Configuration")
+ticker_input = st.sidebar.text_input("Enter Ticker Symbol (e.g., AAPL, MSFT, INFY.NS):", "AAPL").upper()
+
+# --- HELPER FUNCTIONS ---
 def get_robust_session():
     """
     Creates a requests session. It attempts to use curl_cffi to impersonate 
@@ -26,13 +34,10 @@ def get_robust_session():
         })
     return session
 
-# --- UPDATE YOUR DATA LOADING FUNCTION TO USE THE SESSION ---
+# 2. Data Fetching and Math Engine (Cached)
 @st.cache_data(ttl=3600)
-def load_data(ticker, period="5y"):
-    # Generate the browser-impersonated session
+def load_data(ticker, period="5y"):  # Always grab 5 years so backtesting has deep data
     session = get_robust_session()
-    
-    # Pass the session directly into yfinance
     data = yf.Ticker(ticker, session=session)
     df = data.history(period=period)
     info = data.info
@@ -52,7 +57,7 @@ def calculate_indicators(df):
     df['RSI'] = 100 - (100 / (1 + rs))
     return df
 
-# Run calculations
+# Run calculations (Line 56)
 if ticker_input:
     with st.spinner("Fetching historical market data..."):
         try:
@@ -131,87 +136,87 @@ if ticker_input:
                         st.markdown(f"**Verdict:** <span style='color:{rec_color}; font-size:20px; font-weight:bold;'>{recommendation}</span>", unsafe_allow_html=True)
                         for r in reasons:
                             st.write(r)
-                
-                # ==========================================
-                # TAB 2: HISTORICAL BACKTEST
-                # ==========================================
-                with tab2:
-                    st.subheader("Historical Simulation Engine (5-Year Lookback)")
-                    st.write("This simulator calculates exactly how much money you would have made executing SMA Crossover trades compared to buying and holding the stock.")
                     
-                    # Backtest Inputs
-                    initial_capital = st.number_input("Starting Balance ($)", min_value=100, max_value=1000000, value=10000, step=500)
-                    
-                    # Clean up data for testing (remove days missing SMA values)
-                    bt_df = df.dropna(subset=['SMA_200']).copy()
-                    
-                    # Simulation variables
-                    position = 0  # 0 means cash, 1 means holding stock
-                    cash = initial_capital
-                    shares = 0
-                    portfolio_history = []
-                    trade_count = 0
-                    
-                    # Loop through chronological history
-                    for date, row in bt_df.iterrows():
-                        price = row['Close']
-                        sma50 = row['SMA_50']
-                        sma200 = row['SMA_200']
+                    # ==========================================
+                    # TAB 2: HISTORICAL BACKTEST
+                    # ==========================================
+                    with tab2:
+                        st.subheader("Historical Simulation Engine (5-Year Lookback)")
+                        st.write("This simulator calculates exactly how much money you would have made executing SMA Crossover trades compared to buying and holding the stock.")
                         
-                        # 1. Buy Logic (Golden Cross)
-                        if position == 0 and sma50 > sma200:
-                            shares = cash / price
-                            cash = 0
-                            position = 1
-                            trade_count += 1
+                        # Backtest Inputs
+                        initial_capital = st.number_input("Starting Balance ($)", min_value=100, max_value=1000000, value=10000, step=500)
                         
-                        # 2. Sell Logic (Death Cross)
-                        elif position == 1 and sma50 < sma200:
-                            cash = shares * price
-                            shares = 0
-                            position = 0
-                            trade_count += 1
+                        # Clean up data for testing (remove days missing SMA values)
+                        bt_df = df.dropna(subset=['SMA_200']).copy()
+                        
+                        # Simulation variables
+                        position = 0  # 0 means cash, 1 means holding stock
+                        cash = initial_capital
+                        shares = 0
+                        portfolio_history = []
+                        trade_count = 0
+                        
+                        # Loop through chronological history
+                        for date, row in bt_df.iterrows():
+                            price = row['Close']
+                            sma50 = row['SMA_50']
+                            sma200 = row['SMA_200']
                             
-                        # Track total portfolio value at the end of each day
-                        current_value = cash + (shares * price)
-                        portfolio_history.append(current_value)
+                            # 1. Buy Logic (Golden Cross)
+                            if position == 0 and sma50 > sma200:
+                                shares = cash / price
+                                cash = 0
+                                position = 1
+                                trade_count += 1
+                            
+                            # 2. Sell Logic (Death Cross)
+                            elif position == 1 and sma50 < sma200:
+                                cash = shares * price
+                                shares = 0
+                                position = 0
+                                trade_count += 1
+                                
+                            # Track total portfolio value at the end of each day
+                            current_value = cash + (shares * price)
+                            portfolio_history.append(current_value)
+                            
+                        bt_df['Strategy_Value'] = portfolio_history
                         
-                    bt_df['Strategy_Value'] = portfolio_history
-                    
-                    # Benchmark: Buy & Hold Strategy
-                    bh_shares = initial_capital / bt_df['Close'].iloc[0]
-                    bt_df['Buy_Hold_Value'] = bh_shares * bt_df['Close']
-                    
-                    # Final Metrics
-                    final_strategy_val = bt_df['Strategy_Value'].iloc[-1]
-                    final_bh_val = bt_df['Buy_Hold_Value'].iloc[-1]
-                    
-                    strat_return = ((final_strategy_val - initial_capital) / initial_capital) * 100
-                    bh_return = ((final_bh_val - initial_capital) / initial_capital) * 100
-                    
-                    # Show Performance Metrics
-                    m1, m2, m3, m4 = st.columns(4)
-                    m1.metric("Strategy Final Value", f"${final_strategy_val:,.2f}")
-                    m2.metric("Strategy Total Return", f"{strat_return:.2f}%")
-                    m3.metric("Buy & Hold Return", f"{bh_return:.2f}%")
-                    m4.metric("Trades Executed", f"{trade_count}")
-                    
-                    # Performance Verdict
-                    st.markdown("---")
-                    if final_strategy_val > final_bh_val:
-                        st.success(f"🏆 **Victory!** Your SMA Crossover strategy beat the market index/stock buy-and-hold strategy by **{strat_return - bh_return:.2f}%**.")
-                    else:
-                        st.warning(f"⚠️ **Market Beats Strategy.** Buying and holding would have made you **{bh_return - strat_return:.2f}%** more than using this system.")
-                    
-                    # Plotly Equity Curve Comparison Chart
-                    st.subheader("Equity Growth Curve: Strategy vs. Buy & Hold")
-                    equity_fig = go.Figure()
-                    equity_fig.add_trace(go.Scatter(x=bt_df.index, y=bt_df['Strategy_Value'], 
-                                                    line=dict(color='green', width=2), name='SMA Strategy Balance'))
-                    equity_fig.add_trace(go.Scatter(x=bt_df.index, y=bt_df['Buy_Hold_Value'], 
-                                                    line=dict(color='grey', width=1.5, dash='dash'), name='Buy & Hold Benchmark'))
-                    equity_fig.update_layout(height=400, margin=dict(l=0, r=0, t=10, b=0), yaxis_title="Portfolio Value ($)")
-                    st.plotly_chart(equity_fig, use_container_width=True)
+                        # Benchmark: Buy & Hold Strategy
+                        bh_shares = initial_capital / bt_df['Close'].iloc[0]
+                        bt_df['Buy_Hold_Value'] = bh_shares * bt_df['Close']
+                        
+                        # Final Metrics
+                        final_strategy_val = bt_df['Strategy_Value'].iloc[-1]
+                        final_bh_val = bt_df['Buy_Hold_Value'].iloc[-1]
+                        
+                        strat_return = ((final_strategy_val - initial_capital) / initial_capital) * 100
+                        bh_return = ((final_bh_val - initial_capital) / initial_capital) * 100
+                        
+                        # Show Performance Metrics
+                        m1, m2, m3, m4 = st.columns(4)
+                        m1.metric("Strategy Final Value", f"${final_strategy_val:,.2f}")
+                        m2.metric("Strategy Total Return", f"{strat_return:.2f}%")
+                        m3.metric("Buy & Hold Return", f"{bh_return:.2f}%")
+                        m4.metric("Trades Executed", f"{trade_count}")
+                        
+                        # Performance Verdict
+                        st.markdown("---")
+                        if final_strategy_val > final_bh_val:
+                            st.success(f"🏆 **Victory!** Your SMA Crossover strategy beat the market index/stock buy-and-hold strategy by **{strat_return - bh_return:.2f}%**.")
+                        else:
+                            st.warning(f"⚠️ **Market Beats Strategy.** Buying and holding would have made you **{bh_return - strat_return:.2f}%** more than using this system.")
+                        
+                        # Plotly Equity Curve Comparison Chart
+                        st.subheader("Equity Growth Curve: Strategy vs. Buy & Hold")
+                        equity_fig = go.Figure()
+                        equity_fig.add_trace(go.Scatter(x=bt_df.index, y=bt_df['Strategy_Value'], 
+                                                        line=dict(color='green', width=2), name='SMA Strategy Balance'))
+                        equity_fig.add_trace(go.Scatter(x=bt_df.index, y=bt_df['Buy_Hold_Value'], 
+                                                        line=dict(color='grey', width=1.5, dash='dash'), name='Buy & Hold Benchmark'))
+                        equity_fig.update_layout(height=400, margin=dict(l=0, r=0, t=10, b=0), yaxis_title="Portfolio Value ($)")
+                        st.plotly_chart(equity_fig, use_container_width=True)
 
         except Exception as e:
             st.error(f"Could not load data for backtesting: {e}")
