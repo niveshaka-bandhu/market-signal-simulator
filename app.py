@@ -2,19 +2,38 @@ import streamlit as st
 import yfinance as yf
 import pandas as pd
 import plotly.graph_objects as go
+import requests  # Add this import at the top
 
-# 1. Page Configuration
-st.set_page_config(page_title="Algorithmic Trading Dashboard", layout="wide")
-st.title("📈 Algorithmic Trading & Backtesting Dashboard")
+# --- ADD THIS HELPER FUNCTION ---
+def get_robust_session():
+    """
+    Creates a requests session. It attempts to use curl_cffi to impersonate 
+    a real Chrome browser's TLS signature to bypass cloud IP blocks. 
+    Falls back to normal requests with browser headers if curl_cffi is missing.
+    """
+    try:
+        from curl_cffi import requests as curl_requests
+        # Impersonate a real Chrome browser connection
+        session = curl_requests.Session(impersonate="chrome")
+    except ImportError:
+        # Fallback to standard requests with realistic browser headers
+        session = requests.Session()
+        session.headers.update({
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+            "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8",
+            "Accept-Language": "en-US,en;q=0.5",
+            "Connection": "keep-alive"
+        })
+    return session
 
-# --- SIDEBAR: Global User Inputs ---
-st.sidebar.header("Configuration")
-ticker_input = st.sidebar.text_input("Enter Ticker Symbol (e.g., AAPL, MSFT, INFY.NS):", "AAPL").upper()
-
-# 2. Data Fetching and Math Engine (Cached)
+# --- UPDATE YOUR DATA LOADING FUNCTION TO USE THE SESSION ---
 @st.cache_data(ttl=3600)
-def load_data(ticker, period="5y"):  # Always grab 5 years so backtesting has deep data
-    data = yf.Ticker(ticker)
+def load_data(ticker, period="5y"):
+    # Generate the browser-impersonated session
+    session = get_robust_session()
+    
+    # Pass the session directly into yfinance
+    data = yf.Ticker(ticker, session=session)
     df = data.history(period=period)
     info = data.info
     return df, info
