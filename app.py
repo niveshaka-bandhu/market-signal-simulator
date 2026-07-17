@@ -6,12 +6,22 @@ import plotly.graph_objects as go
 import requests
 
 # 1. Page Configuration
-st.set_page_config(page_title="Algorithmic Trading Dashboard", layout="wide")
-st.title("📈 Algorithmic Trading & Backtesting Dashboard")
+st.set_page_config(page_title="Indian Algo Trading Dashboard", layout="wide")
+st.title("📈 Indian Market Trading & Backtesting Dashboard")
 
 # --- SIDEBAR: Global User Inputs ---
 st.sidebar.header("Configuration")
-ticker_input = st.sidebar.text_input("Enter Ticker Symbol (e.g., AAPL, MSFT, INFY.NS):", "AAPL").upper().strip()
+raw_ticker_input = st.sidebar.text_input(
+    "Enter Indian Stock Ticker (e.g., RELIANCE, TCS, INFY, ^NSEI):", 
+    "RELIANCE"
+).upper().strip()
+
+# --- SMART AUTO-FORMATTING FOR INDIAN MARKET ---
+# If it's not an index (starts with ^) and doesn't already have a dot extension, default to National Stock Exchange (.NS)
+if not raw_ticker_input.startswith('^') and '.' not in raw_ticker_input:
+    yfinance_ticker = f"{raw_ticker_input}.NS"
+else:
+    yfinance_ticker = raw_ticker_input
 
 # --- HELPER FUNCTIONS ---
 def get_robust_session():
@@ -38,32 +48,41 @@ def get_robust_session():
 def fetch_from_stooq(ticker):
     """
     Keyless fallback database using direct CSV streams from Stooq.
-    Supports US, Indian (.NS to .IN translation), and other global markets.
+    Tailored specifically for the Indian Market.
     """
     ticker_clean = ticker.upper().strip()
     
-    # Translate standard Indian Yahoo tickers to Stooq format (.NS -> .IN)
-    if ticker_clean.endswith('.NS'):
+    # 1. Handle Indian Indices
+    if ticker_clean.startswith('^'):
+        index_mapping = {
+            '^NSEI': '^NIFTY',    # Nifty 50
+            '^BSESN': '^SENSEX',  # BSE Sensex
+        }
+        ticker_clean = index_mapping.get(ticker_clean, ticker_clean)
+        
+    # 2. Translate Yahoo's National Stock Exchange (.NS) to Stooq's format (.IN)
+    elif ticker_clean.endswith('.NS'):
         ticker_clean = ticker_clean.replace('.NS', '.IN')
-    # Default standard raw tickers (like AAPL) to US exchange format (.US)
+        
+    # 3. Handle raw entries fallback
     elif '.' not in ticker_clean:
-        ticker_clean = f"{ticker_clean}.US"
+        ticker_clean = f"{ticker_clean}.IN"
         
     url = f"https://stooq.com/q/d/l/?s={ticker_clean}&i=d"
     
     df = pd.read_csv(url)
     if df.empty or 'Date' not in df.columns:
-        raise ValueError(f"Could not locate '{ticker_clean}' in Stooq's backup database.")
+        raise ValueError(f"Could not locate '{ticker_clean}' in backup database.")
         
     df['Date'] = pd.to_datetime(df['Date'])
     df.set_index('Date', inplace=True)
     df.sort_index(ascending=True, inplace=True)
     
-    # Filter for the last 5 years to match period scope
+    # Filter for the last 5 years
     five_years_ago = pd.Timestamp.now() - pd.DateOffset(years=5)
     df = df[df.index >= five_years_ago]
     
-    # Standardize columns to match the yfinance schema
+    # Standardize columns
     required_cols = ['Open', 'High', 'Low', 'Close', 'Volume']
     df = df[required_cols]
     df.index.name = 'Date'
@@ -83,7 +102,6 @@ def load_data(ticker, period="5y"):
         if df.empty:
             raise ValueError("Empty response from Yahoo Finance.")
     except Exception as yf_error:
-        # Direct automatic fallback if Yahoo fails or blocks
         st.sidebar.warning("Yahoo API is rate-limited on the cloud server. Fetching from Stooq fallback...")
         try:
             df = fetch_from_stooq(ticker)
@@ -102,7 +120,6 @@ def load_data(ticker, period="5y"):
         if not isinstance(info, dict):
             info = {}
     except Exception:
-        # Silent fallback to keep the backtesting engine active even if metadata fails
         info = {}
         
     return df, info
@@ -122,10 +139,10 @@ def calculate_indicators(df):
     return df
 
 # Run calculations
-if ticker_input:
+if yfinance_ticker:
     with st.spinner("Fetching historical market data..."):
         try:
-            raw_df, stock_info = load_data(ticker_input, "5y")
+            raw_df, stock_info = load_data(yfinance_ticker, "5y")
             
             if raw_df is None or raw_df.empty:
                 st.error("No data found. Please check the ticker symbol.")
@@ -180,18 +197,18 @@ if ticker_input:
                     else:
                         recommendation, rec_color = "HOLD / NEUTRAL", "orange"
 
-                    # Metrics Row
+                    # Metrics Row (Using Rupees Symbol)
                     col1, col2, col3, col4 = st.columns(4)
-                    col1.metric("Current Price", f"${latest_close:.2f}", f"{price_change:.2f} ({pct_change:.2f}%)")
+                    col1.metric("Current Price", f"₹{latest_close:,.2f}", f"{price_change:+.2f} ({pct_change:+.2f}%)")
                     col2.metric("RSI (14-Day)", f"{latest_rsi:.1f}")
-                    col3.metric("50-Day SMA", f"${latest_sma50:.2f}" if not pd.isna(latest_sma50) else "N/A")
+                    col3.metric("50-Day SMA", f"₹{latest_sma50:,.2f}" if not pd.isna(latest_sma50) else "N/A")
                     col4.metric("Recommendation", recommendation)
 
                     st.markdown("---")
                     
                     chart_col, text_col = st.columns([3, 1])
                     with chart_col:
-                        st.subheader("Interactive Price Chart")
+                        st.subheader("Interactive Price Chart (NSE)")
                         fig = go.Figure()
                         # Use past 1 year (approx 252 trading days) for visual display
                         chart_df = df[-252:] if len(df) > 252 else df
@@ -210,17 +227,17 @@ if ticker_input:
                             st.write(r)
                         
                         st.markdown("---")
-                        st.write("### Company Info:")
+                        st.write("### Profile Metadata:")
                         if isinstance(stock_info, dict) and stock_info:
                             st.write(f"**Sector:** {stock_info.get('sector', 'N/A')}")
                             market_cap = stock_info.get('marketCap', 0)
                             if market_cap:
-                                st.write(f"**Market Cap:** ${market_cap:,}")
+                                st.write(f"**Market Cap:** ₹{market_cap:,}")
                             else:
                                 st.write("**Market Cap:** N/A")
                             st.write(f"**Forward P/E:** {stock_info.get('forwardPE', 'N/A')}")
                         else:
-                            st.info("Company profile metadata unavailable due to cloud environment rate limits. Technical analytics remain fully active.")
+                            st.info("Metadata profile unavailable due to cloud environment limits. Technical analytics remain fully active.")
                 
                 # ==========================================
                 # TAB 2: HISTORICAL BACKTEST
@@ -229,8 +246,8 @@ if ticker_input:
                     st.subheader("Historical Simulation Engine (5-Year Lookback)")
                     st.write("This simulator calculates exactly how much money you would have made executing SMA Crossover trades compared to buying and holding the stock.")
                     
-                    # Backtest Inputs
-                    initial_capital = st.number_input("Starting Balance ($)", min_value=100, max_value=1000000, value=10000, step=500)
+                    # Backtest Inputs (Set Default to ₹1,00,000)
+                    initial_capital = st.number_input("Starting Balance (₹)", min_value=100, max_value=10000000, value=100000, step=1000)
                     
                     # Clean up data for testing (remove days missing SMA values)
                     bt_df = df.dropna(subset=['SMA_200']).copy()
@@ -284,7 +301,7 @@ if ticker_input:
                         
                         # Show Performance Metrics
                         m1, m2, m3, m4 = st.columns(4)
-                        m1.metric("Strategy Final Value", f"${final_strategy_val:,.2f}")
+                        m1.metric("Strategy Final Value", f"₹{final_strategy_val:,.2f}")
                         m2.metric("Strategy Total Return", f"{strat_return:.2f}%")
                         m3.metric("Buy & Hold Return", f"{bh_return:.2f}%")
                         m4.metric("Trades Executed", f"{trade_count}")
@@ -292,7 +309,7 @@ if ticker_input:
                         # Performance Verdict
                         st.markdown("---")
                         if final_strategy_val > final_bh_val:
-                            st.success(f"🏆 **Victory!** Your SMA Crossover strategy beat the market index/stock buy-and-hold strategy by **{strat_return - bh_return:.2f}%**.")
+                            st.success(f"🏆 **Victory!** Your SMA Crossover strategy beat the market buy-and-hold strategy by **{strat_return - bh_return:.2f}%**.")
                         else:
                             st.warning(f"⚠️ **Market Beats Strategy.** Buying and holding would have made you **{bh_return - strat_return:.2f}%** more than using this system.")
                         
@@ -303,7 +320,7 @@ if ticker_input:
                                                         line=dict(color='green', width=2), name='SMA Strategy Balance'))
                         equity_fig.add_trace(go.Scatter(x=bt_df.index, y=bt_df['Buy_Hold_Value'], 
                                                         line=dict(color='grey', width=1.5, dash='dash'), name='Buy & Hold Benchmark'))
-                        equity_fig.update_layout(height=400, margin=dict(l=0, r=0, t=10, b=0), yaxis_title="Portfolio Value ($)")
+                        equity_fig.update_layout(height=400, margin=dict(l=0, r=0, t=10, b=0), yaxis_title="Portfolio Value (₹)")
                         st.plotly_chart(equity_fig, use_container_width=True)
 
         except Exception as e:
