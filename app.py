@@ -6,13 +6,13 @@ import plotly.graph_objects as go
 import requests
 
 # 1. Page Configuration
-st.set_page_config(page_title="Indian Algo Trading Dashboard", layout="wide")
-st.title("📈 Indian Market Trading & Backtesting Dashboard")
+st.set_page_config(page_title="Indian Quant Deep-Dive Dashboard", layout="wide")
+st.title("📊 Indian Quant Trading & Deep-Dive Dashboard")
 
 # --- SIDEBAR: Global User Inputs ---
 st.sidebar.header("Configuration")
 raw_ticker_input = st.sidebar.text_input(
-    "Enter Indian Stock Ticker (e.g., RELIANCE, TCS, INFY, ^NSEI):", 
+    "Enter Indian Ticker (e.g., RELIANCE, TCS, INFY, ^NSEI):", 
     "RELIANCE"
 ).upper().strip()
 
@@ -21,6 +21,12 @@ if not raw_ticker_input.startswith('^') and '.' not in raw_ticker_input:
     yfinance_ticker = f"{raw_ticker_input}.NS"
 else:
     yfinance_ticker = raw_ticker_input
+
+# Sidebar Toggle Options for Deep Customization
+st.sidebar.markdown("---")
+st.sidebar.subheader("Technical Overlays")
+show_bollinger = st.sidebar.checkbox("Show Bollinger Bands", value=True)
+show_fib = st.sidebar.checkbox("Show Fibonacci Levels", value=False)
 
 # --- HELPER FUNCTIONS ---
 def get_robust_session():
@@ -111,11 +117,17 @@ def calculate_indicators(df):
     df['MACD'] = exp1 - exp2
     df['Signal_Line'] = df['MACD'].ewm(span=9, adjust=False).mean()
     df['MACD_Hist'] = df['MACD'] - df['Signal_Line']
+    
+    # 4. Bollinger Bands (20-period)
+    df['BB_Mid'] = df['Close'].rolling(window=20).mean()
+    df['BB_Std'] = df['Close'].rolling(window=20).std()
+    df['BB_Upper'] = df['BB_Mid'] + (2 * df['BB_Std'])
+    df['BB_Lower'] = df['BB_Mid'] - (2 * df['BB_Std'])
     return df
 
 # Run calculations
 if yfinance_ticker:
-    with st.spinner("Analyzing market algorithms..."):
+    with st.spinner("Executing quant deep-dive logic..."):
         try:
             raw_df, stock_info = load_data(yfinance_ticker, "5y")
             
@@ -124,151 +136,165 @@ if yfinance_ticker:
             else:
                 df = calculate_indicators(raw_df)
                 
-                # --- TAB SETUP ---
-                tab1, tab2 = st.tabs(["🔍 Live Signal Analysis", "📊 Historical Strategy Backtest"])
+                # Setup Tabs
+                tab1, tab2, tab3 = st.tabs(["🔍 Live Deep Analysis", "📊 Historical Backtest", "📈 Volatility & Risk Metrics"])
+                
+                # Get common data points
+                latest_close = df['Close'].iloc[-1]
+                prev_close = df['Close'].iloc[-2] if len(df) > 1 else latest_close
+                price_change = latest_close - prev_close
+                pct_change = (price_change / prev_close) * 100 if prev_close != 0 else 0
                 
                 # ==========================================
-                # TAB 1: LIVE SIGNAL ANALYSIS
+                # TAB 1: LIVE DEEP ANALYSIS
                 # ==========================================
                 with tab1:
-                    latest_close = df['Close'].iloc[-1]
-                    prev_close = df['Close'].iloc[-2] if len(df) > 1 else latest_close
-                    price_change = latest_close - prev_close
-                    pct_change = (price_change / prev_close) * 100 if prev_close != 0 else 0
-                    
                     latest_rsi = df['RSI'].iloc[-1] if not pd.isna(df['RSI'].iloc[-1]) else 50.0
                     latest_sma50 = df['SMA_50'].iloc[-1]
                     latest_sma200 = df['SMA_200'].iloc[-1]
                     latest_macd = df['MACD'].iloc[-1]
                     latest_signal = df['Signal_Line'].iloc[-1]
                     
-                    # --- DUAL-ALGO MASTER VERDICT ENGINE ---
+                    # --- SCORING MATRIX ---
                     score = 0
                     reasons = []
                     
-                    # Algo 1: SMA Crossover (Trend)
+                    # 1. Long-Term Trend
                     if not pd.isna(latest_sma50) and not pd.isna(latest_sma200):
                         if latest_sma50 > latest_sma200:
                             score += 1
-                            reasons.append("🟢 **SMA Crossover:** Bullish (Long-term upward trend intact)")
+                            reasons.append("🟢 **Long-Term Trend (SMA):** Bullish (50 SMA is above 200 SMA)")
                         else:
                             score -= 1
-                            reasons.append("🔴 **SMA Crossover:** Bearish (Long-term downward trend dominates)")
+                            reasons.append("🔴 **Long-Term Trend (SMA):** Bearish (50 SMA is below 200 SMA)")
                     
-                    # Algo 2: MACD Crossover (Momentum/Short-Term Trend)
+                    # 2. Short-Term Momentum (MACD)
                     if not pd.isna(latest_macd) and not pd.isna(latest_signal):
                         if latest_macd > latest_signal:
                             score += 1
-                            reasons.append("🟢 **MACD Crossover:** Bullish (Short-term upward momentum is accelerating)")
+                            reasons.append("🟢 **Short-Term Momentum (MACD):** Bullish crossover detected")
                         else:
                             score -= 1
-                            reasons.append("🔴 **MACD Crossover:** Bearish (Short-term downward pressure is building)")
+                            reasons.append("🔴 **Short-Term Momentum (MACD):** Bearish crossover detected")
                             
-                    # Algo 3: RSI Overbought/Oversold Filter
-                    if latest_rsi < 35:
-                        score += 1
-                        reasons.append(f"🟢 **RSI Index:** Highly Oversold ({latest_rsi:.1f}) - prime buying territory")
+                    # 3. Exhaustion Index (RSI)
+                    if latest_rsi < 30:
+                        score += 1.5
+                        reasons.append(f"🟢 **Exhaustion (RSI):** Oversold ({latest_rsi:.1f}) - Sellers are exhausted")
                     elif latest_rsi > 70:
-                        score -= 1
-                        reasons.append(f"🔴 **RSI Index:** Overbought ({latest_rsi:.1f}) - due for a cooling-off period")
+                        score -= 1.5
+                        reasons.append(f"🔴 **Exhaustion (RSI):** Overbought ({latest_rsi:.1f}) - Buyers are exhausted")
                     else:
-                        reasons.append(f"🔵 **RSI Index:** Neutral ({latest_rsi:.1f}) - trading in a healthy channel")
-                    
-                    # Translate Score to Actionable Investment Verdict
-                    if score >= 2:
-                        verdict = "🟢 YES - HIGH CONVICTION BUY"
-                        verdict_msg = "All major algorithmic signals have aligned bullishly. Excellent window to invest."
-                        bg_color = "#d4edda"
-                        text_color = "#155724"
-                    elif score == 1:
-                        verdict = "🟡 YES, BUT CAUTIOUS BUY"
-                        verdict_msg = "Overall momentum is positive, but some technical indicators suggest a sub-optimal entry price."
-                        bg_color = "#fff3cd"
-                        text_color = "#856404"
-                    elif score == 0:
-                        verdict = "⚪ HOLD / DO NOT INVEST YET"
-                        verdict_msg = "The algorithms are in conflict or moving sideways. Best to wait on the sidelines for a clear direction."
-                        bg_color = "#e2e3e5"
-                        text_color = "#383d41"
-                    else:
-                        verdict = "🔴 NO - STAY OUT / HIGH RISK"
-                        verdict_msg = "Downward trends and selling pressure dominate. Investing right now carries elevated risk."
-                        bg_color = "#f8d7da"
-                        text_color = "#721c24"
+                        reasons.append(f"🔵 **Exhaustion (RSI):** Neutral ({latest_rsi:.1f}) - Price channel stable")
 
-                    # Custom Investment Recommendation Box
+                    # 4. Bollinger Band Position
+                    latest_bbu = df['BB_Upper'].iloc[-1]
+                    latest_bbl = df['BB_Lower'].iloc[-1]
+                    if not pd.isna(latest_bbu) and not pd.isna(latest_bbl):
+                        if latest_close >= latest_bbu:
+                            score -= 1
+                            reasons.append("🔴 **Volatilty (BB):** Overextended (Price above Upper Bollinger Band)")
+                        elif latest_close <= latest_bbl:
+                            score += 1
+                            reasons.append("🟢 **Volatilty (BB):** Underextended (Price below Lower Bollinger Band)")
+                    
+                    # Investment Verdict Decisions
+                    if score >= 2:
+                        verdict, verdict_msg, bg_color, text_color = "🟢 YES - HIGH CONVICTION BUY", "Technical structures have aligned cleanly. The risk-to-reward ratio is heavily in your favor.", "#d4edda", "#155724"
+                    elif 0.5 <= score < 2:
+                        verdict, verdict_msg, bg_color, text_color = "🟡 CAUTIOUS / STAGGERED BUY", "Indicators are leaning positive, but minor overhead resistance exists. We recommend accumulating slowly.", "#fff3cd", "#856404"
+                    elif -1 <= score < 0.5:
+                        verdict, verdict_msg, bg_color, text_color = "⚪ HOLD / WATCH", "Signals are neutral or conflicting. No edge exists right now. Wait for a breakout.", "#e2e3e5", "#383d41"
+                    else:
+                        verdict, verdict_msg, bg_color, text_color = "🔴 NO - STAY OUT / SELL", "Highly bearish momentum. High risk of capital erosion. Do not buy.", "#f8d7da", "#721c24"
+
+                    # Custom Verdict Banner
                     st.markdown(f"""
-                    <div style="background-color:{bg_color}; padding:20px; border-radius:10px; border-left:8px solid {text_color}; margin-bottom: 25px;">
-                        <h3 style="margin:0; color:{text_color}; font-weight:bold;">INVESTMENT VERDICT: {verdict}</h3>
-                        <p style="margin:5px 0 0 0; color:{text_color}; font-size:16px;">{verdict_msg}</p>
+                    <div style="background-color:{bg_color}; padding:20px; border-radius:10px; border-left:8px solid {text_color}; margin-bottom:25px;">
+                        <h3 style="margin:0; color:{text_color}; font-weight:bold;">CAN I INVEST NOW?: {verdict}</h3>
+                        <p style="margin:5px 0 0 0; color:{text_color}; font-size:16px;">{verdict_msg} <i>(Engine Total Score: {score:+.1f})</i></p>
                     </div>
                     """, unsafe_allow_html=True)
 
-                    # Quick Stats Cards
+                    # Quick Stats
                     col1, col2, col3, col4 = st.columns(4)
                     col1.metric("Current Price", f"₹{latest_close:,.2f}", f"{price_change:+.2f} ({pct_change:+.2f}%)")
                     col2.metric("RSI (14-Day)", f"{latest_rsi:.1f}")
-                    col3.metric("MACD vs Signal", f"{latest_macd:.2f} / {latest_signal:.2f}")
-                    col4.metric("Score", f"{score:+.0f}")
+                    col3.metric("MACD Hist", f"{df['MACD_Hist'].iloc[-1]:.2f}")
+                    col4.metric("Engine Score", f"{score:+.1f}")
 
                     st.markdown("---")
                     
+                    # Main Chart Interface
                     chart_col, text_col = st.columns([3, 1])
                     with chart_col:
-                        st.subheader("Interactive Technical Analysis Charts")
+                        st.subheader("Deep Technical Chart")
                         chart_df = df[-252:] if len(df) > 252 else df
                         
-                        # Subplot 1: Candlesticks & SMAs
-                        fig1 = go.Figure()
-                        fig1.add_trace(go.Candlestick(x=chart_df.index,
+                        fig = go.Figure()
+                        
+                        # Base Candlestick
+                        fig.add_trace(go.Candlestick(x=chart_df.index,
                                         open=chart_df['Open'], high=chart_df['High'],
                                         low=chart_df['Low'], close=chart_df['Close'], name='Price'))
-                        fig1.add_trace(go.Scatter(x=chart_df.index, y=chart_df['SMA_50'], line=dict(color='blue', width=1.5), name='50 SMA'))
-                        fig1.add_trace(go.Scatter(x=chart_df.index, y=chart_df['SMA_200'], line=dict(color='orange', width=1.5), name='200 SMA'))
-                        fig1.update_layout(xaxis_rangeslider_visible=False, height=350, margin=dict(l=0, r=0, t=10, b=10))
-                        st.plotly_chart(fig1, use_container_width=True)
                         
-                        # Subplot 2: Dedicated MACD Oscillator
-                        fig2 = go.Figure()
-                        fig2.add_trace(go.Scatter(x=chart_df.index, y=chart_df['MACD'], line=dict(color='purple', width=1.5), name='MACD Line'))
-                        fig2.add_trace(go.Scatter(x=chart_df.index, y=chart_df['Signal_Line'], line=dict(color='red', width=1.2, dash='dot'), name='Signal Line'))
+                        # Bollinger Bands Overlay
+                        if show_bollinger:
+                            fig.add_trace(go.Scatter(x=chart_df.index, y=chart_df['BB_Upper'], line=dict(color='rgba(173,216,230,0.4)', width=1), name='BB Upper'))
+                            fig.add_trace(go.Scatter(x=chart_df.index, y=chart_df['BB_Lower'], line=dict(color='rgba(173,216,230,0.4)', width=1), name='BB Lower', fill='tonexty', fillcolor='rgba(173,216,230,0.08)'))
+                            fig.add_trace(go.Scatter(x=chart_df.index, y=chart_df['BB_Mid'], line=dict(color='grey', width=1, dash='dash'), name='BB Middle'))
                         
-                        # Custom colors for MACD histogram bars (Green for positive, Red for negative)
-                        colors = ['green' if val >= 0 else 'red' for val in chart_df['MACD_Hist']]
-                        fig2.add_trace(go.Bar(x=chart_df.index, y=chart_df['MACD_Hist'], marker_color=colors, name='Histogram', opacity=0.5))
-                        fig2.update_layout(height=200, margin=dict(l=0, r=0, t=10, b=10))
-                        st.plotly_chart(fig2, use_container_width=True)
+                        # Fibonacci Retracement Levels Overlay
+                        if show_fib:
+                            highest_high = chart_df['High'].max()
+                            lowest_low = chart_df['Low'].min()
+                            diff = highest_high - lowest_low
+                            
+                            levels = [0.0, 0.236, 0.382, 0.5, 0.618, 0.786, 1.0]
+                            colors = ['red', 'orange', 'yellow', 'green', 'blue', 'indigo', 'violet']
+                            
+                            for level, color in zip(levels, colors):
+                                value = highest_high - (level * diff)
+                                fig.add_trace(go.Scatter(
+                                    x=[chart_df.index[0], chart_df.index[-1]],
+                                    y=[value, value],
+                                    mode="lines",
+                                    line=dict(color=color, width=1, dash="dashdot"),
+                                    name=f"Fib {level*100:.1f}%"
+                                ))
+
+                        fig.add_trace(go.Scatter(x=chart_df.index, y=chart_df['SMA_50'], line=dict(color='blue', width=1.5), name='50 SMA'))
+                        fig.add_trace(go.Scatter(x=chart_df.index, y=chart_df['SMA_200'], line=dict(color='orange', width=1.5), name='200 SMA'))
+                        
+                        fig.update_layout(xaxis_rangeslider_visible=False, height=450, margin=dict(l=0, r=0, t=10, b=10))
+                        st.plotly_chart(fig, use_container_width=True)
 
                     with text_col:
-                        st.subheader("Why this Verdict?")
+                        st.subheader("Deep Analysis Breakdown")
                         for r in reasons:
                             st.write(r)
-                        
-                        st.markdown("---")
-                        st.write("### Profile Metadata:")
-                        if isinstance(stock_info, dict) and stock_info:
-                            st.write(f"**Sector:** {stock_info.get('sector', 'N/A')}")
-                            market_cap = stock_info.get('marketCap', 0)
-                            if market_cap:
-                                st.write(f"**Market Cap:** ₹{market_cap:,}")
-                            st.write(f"**Forward P/E:** {stock_info.get('forwardPE', 'N/A')}")
-                        else:
-                            st.info("Metadata profile loaded from backup. Technical analytics remain fully active.")
-                
+                            
+                        # Show calculated Fibonacci details explicitly in sidebar
+                        if show_fib:
+                            st.markdown("---")
+                            st.subheader("Calculated Fib Support Lines")
+                            highest_high = chart_df['High'].max()
+                            lowest_low = chart_df['Low'].min()
+                            diff = highest_high - lowest_low
+                            for l in [0.236, 0.382, 0.5, 0.618, 0.786]:
+                                st.write(f"**Level {l*100:.1f}%:** ₹{highest_high - (l * diff):,.2f}")
+
                 # ==========================================
                 # TAB 2: HISTORICAL BACKTEST
                 # ==========================================
                 with tab2:
                     st.subheader("Historical Simulation Engine (5-Year Lookback)")
-                    
-                    # Backtest controls
                     b_col1, b_col2 = st.columns(2)
                     with b_col1:
-                        strategy_choice = st.selectbox("Select Backtesting Strategy:", ["SMA Crossover (50 vs 200)", "MACD Line Crossover"])
+                        strategy_choice = st.selectbox("Select Strategy to Backtest:", ["SMA Crossover (50 vs 200)", "MACD Line Crossover"])
                     with b_col2:
-                        initial_capital = st.number_input("Starting Balance (₹)", min_value=100, max_value=10000000, value=100000, step=1000)
+                        initial_capital = st.number_input("Starting Capital (₹)", min_value=100, max_value=10000000, value=100000, step=1000)
                     
-                    # Backtest Execution logic
                     bt_df = df.dropna(subset=['SMA_200']).copy() if strategy_choice == "SMA Crossover (50 vs 200)" else df.dropna(subset=['Signal_Line']).copy()
                     
                     if bt_df.empty:
@@ -282,21 +308,14 @@ if yfinance_ticker:
                         
                         for date, row in bt_df.iterrows():
                             price = row['Close']
-                            
-                            if strategy_choice == "SMA Crossover (50 vs 200)":
-                                buy_cond = row['SMA_50'] > row['SMA_200']
-                                sell_cond = row['SMA_50'] < row['SMA_200']
-                            else: # MACD Choice
-                                buy_cond = row['MACD'] > row['Signal_Line']
-                                sell_cond = row['MACD'] < row['Signal_Line']
+                            buy_cond = row['SMA_50'] > row['SMA_200'] if strategy_choice == "SMA Crossover (50 vs 200)" else row['MACD'] > row['Signal_Line']
+                            sell_cond = row['SMA_50'] < row['SMA_200'] if strategy_choice == "SMA Crossover (50 vs 200)" else row['MACD'] < row['Signal_Line']
                                 
-                            # Buy Execution
                             if position == 0 and buy_cond:
                                 shares = cash / price
                                 cash = 0
                                 position = 1
                                 trade_count += 1
-                            # Sell Execution
                             elif position == 1 and sell_cond:
                                 cash = shares * price
                                 shares = 0
@@ -314,7 +333,6 @@ if yfinance_ticker:
                         strat_return = ((final_strategy_val - initial_capital) / initial_capital) * 100
                         bh_return = ((final_bh_val - initial_capital) / initial_capital) * 100
                         
-                        # Show Performance Metrics
                         m1, m2, m3, m4 = st.columns(4)
                         m1.metric("Strategy Final Value", f"₹{final_strategy_val:,.2f}")
                         m2.metric("Strategy Total Return", f"{strat_return:.2f}%")
@@ -323,16 +341,56 @@ if yfinance_ticker:
                         
                         st.markdown("---")
                         if final_strategy_val > final_bh_val:
-                            st.success(f"🏆 **Victory!** {strategy_choice} beat the market buy-and-hold strategy by **{strat_return - bh_return:.2f}%**.")
+                            st.success(f"🏆 **Victory!** {strategy_choice} beat buy-and-hold by **{strat_return - bh_return:.2f}%**.")
                         else:
-                            st.warning(f"⚠️ **Market Beats Strategy.** Buying and holding would have made you **{bh_return - strat_return:.2f}%** more than using this system.")
+                            st.warning(f"⚠️ **Market Beats Strategy.** Buying and holding would have made you **{bh_return - strat_return:.2f}%** more.")
                         
-                        # Plotly Chart
                         equity_fig = go.Figure()
-                        equity_fig.add_trace(go.Scatter(x=bt_df.index, y=bt_df['Strategy_Value'], line=dict(color='green', width=2), name=f'{strategy_choice}'))
-                        equity_fig.add_trace(go.Scatter(x=bt_df.index, y=bt_df['Buy_Hold_Value'], line=dict(color='grey', width=1.5, dash='dash'), name='Buy & Hold Benchmark'))
+                        equity_fig.add_trace(go.Scatter(x=bt_df.index, y=bt_df['Strategy_Value'], line=dict(color='green', width=2), name='Strategy'))
+                        equity_fig.add_trace(go.Scatter(x=bt_df.index, y=bt_df['Buy_Hold_Value'], line=dict(color='grey', width=1.5, dash='dash'), name='Buy & Hold'))
                         equity_fig.update_layout(height=400, margin=dict(l=0, r=0, t=10, b=0), yaxis_title="Portfolio Value (₹)")
                         st.plotly_chart(equity_fig, use_container_width=True)
 
+                # ==========================================
+                # TAB 3: VOLATILITY & RISK METRICS
+                # ==========================================
+                with tab3:
+                    st.subheader("Deep Risk Analysis Profile")
+                    st.write("Before allocating actual capital, understand how this asset moves. Low volatility is better for stable dividend portfolios; high volatility is suited for risk-tolerant momentum traders.")
+                    
+                    # 1. Daily Returns
+                    df['Daily_Return'] = df['Close'].pct_change()
+                    
+                    # 2. Annualized Volatility
+                    daily_vol = df['Daily_Return'].std()
+                    ann_vol = daily_vol * np.sqrt(252) * 100
+                    
+                    # 3. Maximum Drawdown (Peak to Trough decline)
+                    rolling_max = df['Close'].cummax()
+                    drawdowns = (df['Close'] - rolling_max) / rolling_max
+                    max_drawdown = drawdowns.min() * 100
+                    
+                    # Risk Cards
+                    rc1, rc2, rc3 = st.columns(3)
+                    
+                    # Volatility classification
+                    if ann_vol < 15:
+                        vol_class = "Low Risk (Conservative)"
+                    elif 15 <= ann_vol < 30:
+                        vol_class = "Moderate Risk (Balanced)"
+                    else:
+                        vol_class = "High Risk (Aggressive)"
+                        
+                    rc1.metric("Annualized Volatility (Risk)", f"{ann_vol:.2f}%", vol_class, delta_color="off")
+                    rc2.metric("Maximum Historical Drawdown", f"{max_drawdown:.2f}%", "Worst Peak-to-Trough Decline", delta_color="inverse")
+                    rc3.metric("Daily Price Std. Dev (Standard Volatility)", f"₹{df['Close'].std():.2f}")
+                    
+                    st.markdown("---")
+                    
+                    # Detailed Risk Explainer
+                    st.write("### How to read these Risk Metrics:")
+                    st.write(f"- **Annualized Volatility of {ann_vol:.1f}%:** This means over a given year, the asset's price is historically expected to deviate by up to plus or minus {ann_vol:.1f}% from its mean trend line.")
+                    st.write(f"- **Maximum Drawdown of {max_drawdown:.1f}%:** If you had invested at the absolute peak over the last 5 years, the deepest paper loss you would have had to endure before recovering was **{max_drawdown:.1f}%**.")
+
         except Exception as e:
-            st.error(f"Could not complete calculation run: {e}")
+            st.error(f"Could not load data for analysis: {e}")
