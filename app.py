@@ -5,52 +5,72 @@ import numpy as np
 import plotly.graph_objects as go
 import requests
 import subprocess
+import sys
 import os
 
-# 1. Page Configuration
+# ==========================================
+# 1. PAGE CONFIGURATION & THEME SETUP
+# ==========================================
 st.set_page_config(page_title="Indian Quant Deep-Dive Dashboard", layout="wide")
 st.title("📊 Indian Quant Trading & Deep-Dive Dashboard")
 
-# --- AUTO-INSTALL PLAYWRIGHT BINARIES (Required for openscreener in Cloud) ---
+# --- ROBUST AUTO-INSTALL PLAYWRIGHT BINARIES ---
 @st.cache_resource
 def install_playwright_binaries():
     """
-    Ensures Chromium is installed on the Streamlit server so openscreener 
-    can run headlessly in the cloud.
+    Ensures Chromium is installed on the Streamlit server.
+    Uses sys.executable to target the active python environment directly.
     """
     try:
-        # Check if playwright is already ready
-        subprocess.run(["playwright", "--version"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=True)
-    except Exception:
-        with st.spinner("Initializing headless browser modules for Screener.in connection..."):
-            try:
-                subprocess.run(["playwright", "install", "chromium"], check=True)
-            except Exception as e:
-                st.sidebar.error(f"Playwright installation failed: {e}")
+        # Attempt to run playwright installation headlessly
+        subprocess.run(
+            [sys.executable, "-m", "playwright", "install", "chromium"], 
+            check=True, 
+            capture_output=True, 
+            text=True
+        )
+        return True
+    except subprocess.CalledProcessError as e:
+        return f"Playwright install failed: {e.stderr}"
+    except Exception as e:
+        return f"Unexpected error: {str(e)}"
 
-# Call the installer
-install_playwright_binaries()
+# Call the installer on app startup
+with st.spinner("Initializing headless browser modules for Screener.in connection..."):
+    install_status = install_playwright_binaries()
+    if install_status is not True:
+        st.sidebar.warning("Headless browser setup delayed. Some Screener.in features might require a system reboot.")
 
-# --- SIDEBAR: Global User Inputs ---
+# --- DYNAMIC IMPORT OF OPENSCREENER ---
+try:
+    from openscreener import Stock
+    OPENSCREENER_AVAILABLE = True
+except ImportError:
+    OPENSCREENER_AVAILABLE = False
+
+# ==========================================
+# 2. GLOBAL SIDEBAR CONFIGURATION
+# ==========================================
 st.sidebar.header("Configuration")
 raw_ticker_input = st.sidebar.text_input(
     "Enter Indian Ticker (e.g., RELIANCE, TCS, INFY, ^NSEI):", 
     "RELIANCE"
 ).upper().strip()
 
-# --- SMART AUTO-FORMATTING FOR INDIAN MARKET ---
+# Exchange Suffixing Logic
 if not raw_ticker_input.startswith('^') and '.' not in raw_ticker_input:
     yfinance_ticker = f"{raw_ticker_input}.NS"
 else:
     yfinance_ticker = raw_ticker_input
 
-# Sidebar Toggle Options
 st.sidebar.markdown("---")
 st.sidebar.subheader("Technical Overlays")
 show_bollinger = st.sidebar.checkbox("Show Bollinger Bands", value=True)
 show_fib = st.sidebar.checkbox("Show Fibonacci Levels", value=False)
 
-# --- HELPER FUNCTIONS ---
+# ==========================================
+# 3. ROBUST DATA FETCHING PIPELINE
+# ==========================================
 def get_robust_session():
     try:
         from curl_cffi import requests as curl_requests
@@ -58,7 +78,7 @@ def get_robust_session():
     except ImportError:
         session = requests.Session()
         session.headers.update({
-            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, Gecko) Chrome/120.0.0.0 Safari/537.36",
             "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8",
             "Accept-Language": "en-US,en;q=0.5",
             "Connection": "keep-alive"
@@ -120,20 +140,21 @@ def load_data(ticker, period="5y"):
         
     return df, info
 
-# --- NEW CACHED SCREENER.IN DATA LOADER (Option 3) ---
-@st.cache_data(ttl=86400) # Cache fundamental data for 24 hours to prevent unnecessary scrapes
+# Cached Screener.in Fundamental Extractor
+@st.cache_data(ttl=86400)
 def load_screener_data(ticker):
     """
-    Connects to Screener.in using openscreener library to fetch deep-dive fundamentals.
+    Connects to Screener.in using openscreener library to fetch deep fundamentals.
     """
     clean_symbol = ticker.split(".")[0].strip().upper()
     
-    # Avoid scanning indices
     if clean_symbol.startswith('^'):
-        return {"success": False, "error": "Indices are not supported on Screener.in stock module."}
+        return {"success": False, "error": "Indices are not supported on Screener.in stock modules."}
+    
+    if not OPENSCREENER_AVAILABLE:
+        return {"success": False, "error": "No module named 'openscreener' found in dependencies."}
         
     try:
-        from openscreener import Stock
         stock = Stock(clean_symbol)
         summary = stock.summary()
         pros_cons = stock.pros_cons()
@@ -150,7 +171,7 @@ def load_screener_data(ticker):
 
 def extract_ratio_value(ratios_dict, key_patterns):
     """
-    Extracts a numeric float out of the various naming conventions in Screener's output.
+    Helper to match various naming patterns in Screener's output.
     """
     for key, value in ratios_dict.items():
         key_lower = key.lower().replace(" ", "_").replace("/", "_").replace("-", "_")
@@ -165,45 +186,46 @@ def extract_ratio_value(ratios_dict, key_patterns):
 
 def calculate_indicators(df):
     df = df.copy()
-    # 1. SMAs
+    # SMAs
     df['SMA_50'] = df['Close'].rolling(window=50).mean()
     df['SMA_200'] = df['Close'].rolling(window=200).mean()
     
-    # 2. RSI
+    # RSI
     delta = df['Close'].diff()
     gain = (delta.where(delta > 0, 0)).rolling(window=14).mean()
     loss = (-delta.where(delta < 0, 0)).rolling(window=14).mean()
     rs = gain / loss
     df['RSI'] = 100 - (100 / (1 + rs))
     
-    # 3. MACD
+    # MACD
     exp1 = df['Close'].ewm(span=12, adjust=False).mean()
     exp2 = df['Close'].ewm(span=26, adjust=False).mean()
     df['MACD'] = exp1 - exp2
     df['Signal_Line'] = df['MACD'].ewm(span=9, adjust=False).mean()
     df['MACD_Hist'] = df['MACD'] - df['Signal_Line']
     
-    # 4. Bollinger Bands (20-period)
+    # Bollinger Bands
     df['BB_Mid'] = df['Close'].rolling(window=20).mean()
     df['BB_Std'] = df['Close'].rolling(window=20).std()
     df['BB_Upper'] = df['BB_Mid'] + (2 * df['BB_Std'])
     df['BB_Lower'] = df['BB_Mid'] - (2 * df['BB_Std'])
     return df
 
-# Run calculations
+# ==========================================
+# 4. RUN CALCULATIONS & GENERATE INTERFACE
+# ==========================================
 if yfinance_ticker:
-    # Trigger load for technicals and fundamentals in parallel
-    with st.spinner("Fetching data and analyzing quantitative structures..."):
+    with st.spinner("Fetching market indices and running calculations..."):
         try:
             raw_df, stock_info = load_data(yfinance_ticker, "5y")
             screener_data = load_screener_data(yfinance_ticker)
             
             if raw_df is None or raw_df.empty:
-                st.error("No data found. Please check the ticker symbol.")
+                st.error("No data returned. Please verify ticker symbols.")
             else:
                 df = calculate_indicators(raw_df)
                 
-                # Setup Tabs
+                # Tabbed Interface Setup
                 tab1, tab2, tab3, tab4 = st.tabs([
                     "🔍 Live Deep Analysis", 
                     "📊 Historical Backtest", 
@@ -211,7 +233,7 @@ if yfinance_ticker:
                     "💎 Intrinsic Value Calculators"
                 ])
                 
-                # Get common data points
+                # Baseline metrics
                 latest_close = df['Close'].iloc[-1]
                 prev_close = df['Close'].iloc[-2] if len(df) > 1 else latest_close
                 price_change = latest_close - prev_close
@@ -227,7 +249,7 @@ if yfinance_ticker:
                     latest_macd = df['MACD'].iloc[-1]
                     latest_signal = df['Signal_Line'].iloc[-1]
                     
-                    # --- SCORING MATRIX ---
+                    # Scoring Logic
                     score = 0
                     reasons = []
                     
@@ -257,7 +279,7 @@ if yfinance_ticker:
                         score -= 1.5
                         reasons.append(f"🔴 **Exhaustion (RSI):** Overbought ({latest_rsi:.1f}) - Buyers are exhausted")
                     else:
-                        reasons.append(f"🔵 **Exhaustion (RSI):** Neutral ({latest_rsi:.1f})")
+                        reasons.append(f"🔵 **Exhaustion (RSI):** Neutral ({latest_rsi:.1f}) - Trend is balanced")
 
                     # 4. Bollinger Band Position
                     latest_bbu = df['BB_Upper'].iloc[-1]
@@ -270,17 +292,16 @@ if yfinance_ticker:
                             score += 1
                             reasons.append("🟢 **Volatility (BB):** Underextended (Price below Lower Bollinger Band)")
                     
-                    # Investment Verdict Decisions
+                    # Formulate Investment Verdict
                     if score >= 2:
-                        verdict, verdict_msg, bg_color, text_color = "🟢 YES - HIGH CONVICTION BUY", "Technical structures have aligned cleanly. The risk-to-reward ratio is heavily in your favor.", "#d4edda", "#155724"
+                        verdict, verdict_msg, bg_color, text_color = "🟢 YES - HIGH CONVICTION BUY", "Technical parameters have aligned cleanly. The risk-to-reward ratio is in your favor.", "#d4edda", "#155724"
                     elif 0.5 <= score < 2:
-                        verdict, verdict_msg, bg_color, text_color = "🟡 CAUTIOUS / STAGGERED BUY", "Indicators are leaning positive, but minor overhead resistance exists. We recommend accumulating slowly.", "#fff3cd", "#856404"
+                        verdict, verdict_msg, bg_color, text_color = "🟡 CAUTIOUS / STAGGERED BUY", "Indicators are leaning positive, but moderate overhead resistance remains. Accumulate slowly.", "#fff3cd", "#856404"
                     elif -1 <= score < 0.5:
-                        verdict, verdict_msg, bg_color, text_color = "⚪ HOLD / WATCH", "Signals are neutral or conflicting. No edge exists right now. Wait for a breakout.", "#e2e3e5", "#383d41"
+                        verdict, verdict_msg, bg_color, text_color = "⚪ HOLD / WATCH", "Signals are neutral or conflicting. No distinct mathematical edge exists right now.", "#e2e3e5", "#383d41"
                     else:
-                        verdict, verdict_msg, bg_color, text_color = "🔴 NO - STAY OUT / SELL", "Highly bearish momentum. High risk of capital erosion. Do not buy.", "#f8d7da", "#721c24"
+                        verdict, verdict_msg, bg_color, text_color = "🔴 NO - STAY OUT / SELL", "Highly bearish structural momentum. Elevated risk of structural drawdown.", "#f8d7da", "#721c24"
 
-                    # Custom Verdict Banner
                     st.markdown(f"""
                     <div style="background-color:{bg_color}; padding:20px; border-radius:10px; border-left:8px solid {text_color}; margin-bottom:25px;">
                         <h3 style="margin:0; color:{text_color}; font-weight:bold;">CAN I INVEST NOW?: {verdict}</h3>
@@ -288,7 +309,6 @@ if yfinance_ticker:
                     </div>
                     """, unsafe_allow_html=True)
 
-                    # Quick Stats
                     col1, col2, col3, col4 = st.columns(4)
                     col1.metric("Current Price", f"₹{latest_close:,.2f}", f"{price_change:+.2f} ({pct_change:+.2f}%)")
                     col2.metric("RSI (14-Day)", f"{latest_rsi:.1f}")
@@ -297,7 +317,7 @@ if yfinance_ticker:
 
                     st.markdown("---")
                     
-                    # Main Chart Interface
+                    # Custom Chart Interface
                     chart_col, text_col = st.columns([3, 1])
                     with chart_col:
                         st.subheader("Deep Technical Chart")
@@ -305,18 +325,18 @@ if yfinance_ticker:
                         
                         fig = go.Figure()
                         
-                        # Base Candlestick
+                        # Base Candlestick Trace
                         fig.add_trace(go.Candlestick(x=chart_df.index,
                                         open=chart_df['Open'], high=chart_df['High'],
                                         low=chart_df['Low'], close=chart_df['Close'], name='Price'))
                         
-                        # Bollinger Bands Overlay
+                        # Bollinger Bands Visuals
                         if show_bollinger:
                             fig.add_trace(go.Scatter(x=chart_df.index, y=chart_df['BB_Upper'], line=dict(color='rgba(173,216,230,0.4)', width=1), name='BB Upper'))
                             fig.add_trace(go.Scatter(x=chart_df.index, y=chart_df['BB_Lower'], line=dict(color='rgba(173,216,230,0.4)', width=1), name='BB Lower', fill='tonexty', fillcolor='rgba(173,216,230,0.08)'))
                             fig.add_trace(go.Scatter(x=chart_df.index, y=chart_df['BB_Mid'], line=dict(color='grey', width=1, dash='dash'), name='BB Middle'))
                         
-                        # Fibonacci Retracement Levels Overlay
+                        # Fibonacci Retracement Levels Trace
                         if show_fib:
                             highest_high = chart_df['High'].max()
                             lowest_low = chart_df['Low'].min()
@@ -346,7 +366,7 @@ if yfinance_ticker:
                         for r in reasons:
                             st.write(r)
                             
-                    # --- NEW: SCREENER.IN PROS & CONS UI CARD ---
+                    # --- SCREENER.IN PROS & CONS VIEW ---
                     st.markdown("---")
                     st.subheader("📋 Screener.in Qualitative Sentiment Analysis")
                     if screener_data.get("success"):
@@ -382,7 +402,7 @@ if yfinance_ticker:
                     bt_df = df.dropna(subset=['SMA_200']).copy() if strategy_choice == "SMA Crossover (50 vs 200)" else df.dropna(subset=['Signal_Line']).copy()
                     
                     if bt_df.empty:
-                        st.error("Insufficient historical data to run backtest.")
+                        st.error("Insufficient historical data to execute backtest.")
                     else:
                         position = 0
                         cash = initial_capital
@@ -427,7 +447,7 @@ if yfinance_ticker:
                         if final_strategy_val > final_bh_val:
                             st.success(f"🏆 **Victory!** {strategy_choice} beat buy-and-hold by **{strat_return - bh_return:.2f}%**.")
                         else:
-                            st.warning(f"⚠️ **Market Beats Strategy.** Buying and holding would have made you **{bh_return - strat_return:.2f}%** more.")
+                            st.warning(f"⚠️ **Market Beats Strategy.** Buying and holding would have yielded **{bh_return - strat_return:.2f}%** more.")
                         
                         equity_fig = go.Figure()
                         equity_fig.add_trace(go.Scatter(x=bt_df.index, y=bt_df['Strategy_Value'], line=dict(color='green', width=2), name='Strategy'))
@@ -440,7 +460,7 @@ if yfinance_ticker:
                 # ==========================================
                 with tab3:
                     st.subheader("Deep Risk Analysis Profile")
-                    st.write("Understand volatility, downside exposure, and standard deviation profile over the past 5 years.")
+                    st.write("Assess historic standard deviation and drawback thresholds before deploying retail capital.")
                     
                     df['Daily_Return'] = df['Close'].pct_change()
                     daily_vol = df['Daily_Return'].std()
@@ -452,8 +472,8 @@ if yfinance_ticker:
                     
                     rc1, rc2, rc3 = st.columns(3)
                     vol_class = "Low Risk" if ann_vol < 15 else "Moderate Risk" if ann_vol < 30 else "High Risk"
-                    rc1.metric("Annualized Volatility (Risk)", f"{ann_vol:.2f}%", vol_class, delta_color="off")
-                    rc2.metric("Maximum Historical Drawdown", f"{max_drawdown:.2f}%", "Deepest Drop from Peak", delta_color="inverse")
+                    rc1.metric("Annualized Volatility", f"{ann_vol:.2f}%", vol_class, delta_color="off")
+                    rc2.metric("Maximum Historical Drawdown", f"{max_drawdown:.2f}%", "Worst-case drop from absolute peak", delta_color="inverse")
                     rc3.metric("Standard Deviation of Price", f"₹{df['Close'].std():.2f}")
 
                 # ==========================================
@@ -461,17 +481,16 @@ if yfinance_ticker:
                 # ==========================================
                 with tab4:
                     st.subheader("💎 Valuation Models & Intrinsic Calculations")
-                    st.write("Estimate fundamental fair value using inputs extracted live from **Screener.in**.")
+                    st.write("Calculate intrinsic fair value benchmarks utilizing core metrics extracted from **Screener.in**.")
 
-                    # --- RESOLVE INPUTS FROM SCREENER OR FALLBACK ---
                     screener_ratios = screener_data.get("ratios", {}) if screener_data.get("success") else {}
                     
-                    # Extract ratios safely using keyword mapping
+                    # Extract fundamental constants
                     sc_pe = extract_ratio_value(screener_ratios, ["stock_p_e", "pe", "p_e"])
                     sc_bv = extract_ratio_value(screener_ratios, ["book_value", "bvps"])
                     sc_mcap = extract_ratio_value(screener_ratios, ["market_cap", "m_cap"])
                     
-                    # Derive EPS from PE and Price: EPS = Close / PE
+                    # Back-calculate EPS from PE ratio
                     if sc_pe and sc_pe > 0:
                         calculated_eps = latest_close / sc_pe
                     else:
@@ -479,8 +498,6 @@ if yfinance_ticker:
                         
                     derived_bvps = sc_bv if sc_bv else float(stock_info.get('bookValue', 150.0)) if stock_info.get('bookValue') else 150.0
                     derived_mcap = sc_mcap * 10000000 if sc_mcap else float(stock_info.get('marketCap', 100000000000.0)) if stock_info.get('marketCap') else 100000000000.0
-                    
-                    # Derived Shares Outstanding: MCAP / Close
                     derived_shares = derived_mcap / latest_close
 
                     calc_col1, calc_col2 = st.columns(2)
@@ -488,7 +505,7 @@ if yfinance_ticker:
                     # --- MODEL A: BENJAMIN GRAHAM VALUE ---
                     with calc_col1:
                         st.markdown("### 🏛️ Graham's Fair Value Model")
-                        st.write("Based on Graham's defensive investment criteria.")
+                        st.write("Assesses asset-to-earnings consistency for mature companies.")
                         
                         eps_input = st.number_input("Earnings Per Share (EPS)", value=float(calculated_eps))
                         bvps_input = st.number_input("Book Value Per Share (BVPS)", value=float(derived_bvps))
@@ -499,23 +516,24 @@ if yfinance_ticker:
                             
                             st.markdown(f"#### Calculated Graham Value: **₹{graham_fair_value:,.2f}**")
                             if graham_mos > 20:
-                                st.success(f"✅ **Undervalued:** Stock trades at a **{gra_mos:.1f}%** discount to Graham Value." if 'gra_mos' in locals() else f"✅ **Undervalued:** Trades at a **{graham_mos:.1f}%** discount.")
+                                st.success(f"✅ **Undervalued:** Stock trades at a **{graham_mos:.1f}%** discount to Graham Value.")
                             elif 0 <= graham_mos <= 20:
                                 st.info(f"💛 **Fairly Valued:** Margin of Safety is tight (**{graham_mos:.1f}%**).")
                             else:
                                 st.warning(f"⚠️ **Overvalued:** Trades at a **{abs(graham_mos):.1f}%** premium.")
                         else:
-                            st.warning("Graham model requires positive Earnings and positive Book Value.")
+                            st.warning("Graham model requires positive Earnings and positive Book Value metrics.")
 
                     # --- MODEL B: DISCOUNTED CASH FLOW (DCF) ---
                     with calc_col2:
                         st.markdown("### 🌀 Discounted Cash Flow (DCF) Model")
-                        st.write("Project future cash flows discounted to present value.")
+                        st.write("Project and discount company cash flows.")
                         
-                        fcf_input = st.number_input("Free Cash Flow (FCF in ₹)", value=float(derived_mcap * 0.05)) # Estimate FCF as 5% of MCAP if missing
+                        # Estimate FCF at 5% of MCAP as a clean initial starting baseline if missing
+                        fcf_input = st.number_input("Free Cash Flow (FCF in ₹)", value=float(derived_mcap * 0.05))
                         shares_input = st.number_input("Shares Outstanding", value=float(derived_shares))
                         
-                        g_rate = st.slider("Growth Rate (g) (%)", min_value=-5.0, max_value=40.0, value=12.0, step=0.5)
+                        g_rate = st.slider("Expected Growth Rate (g) (%)", min_value=-5.0, max_value=40.0, value=12.0, step=0.5)
                         d_rate = st.slider("Discount Rate (r) (%)", min_value=5.0, max_value=25.0, value=11.0, step=0.5)
                         t_rate = st.slider("Terminal Growth Rate (gn) (%)", min_value=1.0, max_value=8.0, value=4.5, step=0.1)
 
@@ -552,4 +570,4 @@ if yfinance_ticker:
                                 st.warning(f"⚠️ **Overvalued:** Price is **{abs(dcf_mos):.1f}%** above estimated DCF value.")
 
         except Exception as e:
-            st.error(f"Could not complete calculation run: {e}")
+            st.error(f"Could not load data for analysis: {e}")
