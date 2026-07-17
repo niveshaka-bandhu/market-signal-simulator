@@ -4,49 +4,13 @@ import pandas as pd
 import numpy as np
 import plotly.graph_objects as go
 import requests
-import subprocess
-import sys
-import os
+from bs4 import BeautifulSoup
 
 # ==========================================
 # 1. PAGE CONFIGURATION & THEME SETUP
 # ==========================================
 st.set_page_config(page_title="Indian Quant Deep-Dive Dashboard", layout="wide")
 st.title("📊 Indian Quant Trading & Deep-Dive Dashboard")
-
-# --- ROBUST AUTO-INSTALL PLAYWRIGHT BINARIES ---
-@st.cache_resource
-def install_playwright_binaries():
-    """
-    Ensures Chromium is installed on the Streamlit server.
-    Uses sys.executable to target the active python environment directly.
-    """
-    try:
-        # Attempt to run playwright installation headlessly
-        subprocess.run(
-            [sys.executable, "-m", "playwright", "install", "chromium"], 
-            check=True, 
-            capture_output=True, 
-            text=True
-        )
-        return True
-    except subprocess.CalledProcessError as e:
-        return f"Playwright install failed: {e.stderr}"
-    except Exception as e:
-        return f"Unexpected error: {str(e)}"
-
-# Call the installer on app startup
-with st.spinner("Initializing headless browser modules for Screener.in connection..."):
-    install_status = install_playwright_binaries()
-    if install_status is not True:
-        st.sidebar.warning("Headless browser setup delayed. Some Screener.in features might require a system reboot.")
-
-# --- DYNAMIC IMPORT OF OPENSCREENER ---
-try:
-    from openscreener import Stock
-    OPENSCREENER_AVAILABLE = True
-except ImportError:
-    OPENSCREENER_AVAILABLE = False
 
 # ==========================================
 # 2. GLOBAL SIDEBAR CONFIGURATION
@@ -71,19 +35,13 @@ show_fib = st.sidebar.checkbox("Show Fibonacci Levels", value=False)
 # ==========================================
 # 3. ROBUST DATA FETCHING PIPELINE
 # ==========================================
-def get_robust_session():
-    try:
-        from curl_cffi import requests as curl_requests
-        session = curl_requests.Session(impersonate="chrome")
-    except ImportError:
-        session = requests.Session()
-        session.headers.update({
-            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, Gecko) Chrome/120.0.0.0 Safari/537.36",
-            "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8",
-            "Accept-Language": "en-US,en;q=0.5",
-            "Connection": "keep-alive"
-        })
-    return session
+def get_robust_headers():
+    return {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8",
+        "Accept-Language": "en-US,en;q=0.5",
+        "Connection": "keep-alive"
+    }
 
 def fetch_from_stooq(ticker):
     ticker_clean = ticker.upper().strip()
@@ -117,7 +75,8 @@ def load_data(ticker, period="5y"):
     df = None
     info = {}
     try:
-        session = get_robust_session()
+        session = requests.Session()
+        session.headers.update(get_robust_headers())
         data = yf.Ticker(ticker, session=session)
         df = data.history(period=period)
         if df.empty:
@@ -130,7 +89,8 @@ def load_data(ticker, period="5y"):
             raise RuntimeError(f"Yahoo blocked: {yf_error}. Backup failed: {stooq_error}.")
             
     try:
-        session = get_robust_session()
+        session = requests.Session()
+        session.headers.update(get_robust_headers())
         data = yf.Ticker(ticker, session=session)
         info = data.info
         if not isinstance(info, dict):
@@ -140,39 +100,58 @@ def load_data(ticker, period="5y"):
         
     return df, info
 
-# Cached Screener.in Fundamental Extractor
+# --- LIGHTWEIGHT BEAUTIFULSOUP SCREENER SCRAPER ---
 @st.cache_data(ttl=86400)
-def load_screener_data(ticker):
+def load_screener_data_light(ticker):
     """
-    Connects to Screener.in using openscreener library to fetch deep fundamentals.
+    Scrapes Screener.in's key ratios, pros, and cons without a headless browser.
     """
     clean_symbol = ticker.split(".")[0].strip().upper()
-    
     if clean_symbol.startswith('^'):
-        return {"success": False, "error": "Indices are not supported on Screener.in stock modules."}
-    
-    if not OPENSCREENER_AVAILABLE:
-        return {"success": False, "error": "No module named 'openscreener' found in dependencies."}
+        return {"success": False, "error": "Indices not supported on Screener.in"}
         
+    url = f"https://www.screener.in/company/{clean_symbol}/"
     try:
-        stock = Stock(clean_symbol)
-        summary = stock.summary()
-        pros_cons = stock.pros_cons()
+        response = requests.get(url, headers=get_robust_headers(), timeout=10)
+        if response.status_code != 200:
+            return {"success": False, "error": f"Failed HTTP response ({response.status_code})"}
+            
+        soup = BeautifulSoup(response.content, 'html.parser')
         
+        # Parse Key Ratios
+        ratios = {}
+        ratios_container = soup.find('ul', id='top-ratios') or soup.find('div', class_='company-ratios')
+        if ratios_container:
+            for item in ratios_container.find_all('li'):
+                name_span = item.find('span', class_='name')
+                value_span = item.find('span', class_='number') or item.find_all('span')[-1]
+                if name_span and value_span:
+                    name = name_span.text.strip().replace(":", "")
+                    value = value_span.text.strip().replace('\n', '').replace('  ', ' ')
+                    ratios[name] = value
+
+        # Parse Pros and Cons
+        pros = []
+        cons = []
+        pros_section = soup.find('div', class_='pros')
+        cons_section = soup.find('div', class_='cons')
+        
+        if pros_section:
+            pros = [li.text.strip() for li in pros_section.find_all('li')]
+        if cons_section:
+            cons = [li.text.strip() for li in cons_section.find_all('li')]
+            
         return {
             "success": True,
-            "company_name": summary.get("company_name", clean_symbol),
-            "ratios": summary.get("ratios", {}),
-            "pros": pros_cons.get("pros", []),
-            "cons": pros_cons.get("cons", [])
+            "company_name": clean_symbol,
+            "ratios": ratios,
+            "pros": pros,
+            "cons": cons
         }
     except Exception as e:
         return {"success": False, "error": str(e)}
 
 def extract_ratio_value(ratios_dict, key_patterns):
-    """
-    Helper to match various naming patterns in Screener's output.
-    """
     for key, value in ratios_dict.items():
         key_lower = key.lower().replace(" ", "_").replace("/", "_").replace("-", "_")
         for pattern in key_patterns:
@@ -215,10 +194,10 @@ def calculate_indicators(df):
 # 4. RUN CALCULATIONS & GENERATE INTERFACE
 # ==========================================
 if yfinance_ticker:
-    with st.spinner("Fetching market indices and running calculations..."):
+    with st.spinner("Fetching market data and running calculations..."):
         try:
             raw_df, stock_info = load_data(yfinance_ticker, "5y")
-            screener_data = load_screener_data(yfinance_ticker)
+            screener_data = load_screener_data_light(yfinance_ticker)
             
             if raw_df is None or raw_df.empty:
                 st.error("No data returned. Please verify ticker symbols.")
