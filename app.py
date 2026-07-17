@@ -17,7 +17,6 @@ raw_ticker_input = st.sidebar.text_input(
 ).upper().strip()
 
 # --- SMART AUTO-FORMATTING FOR INDIAN MARKET ---
-# If it's not an index (starts with ^) and doesn't already have a dot extension, default to National Stock Exchange (.NS)
 if not raw_ticker_input.startswith('^') and '.' not in raw_ticker_input:
     yfinance_ticker = f"{raw_ticker_input}.NS"
 else:
@@ -25,17 +24,10 @@ else:
 
 # --- HELPER FUNCTIONS ---
 def get_robust_session():
-    """
-    Creates a requests session. It attempts to use curl_cffi to impersonate 
-    a real Chrome browser's TLS signature to bypass cloud IP blocks. 
-    Falls back to normal requests with browser headers if curl_cffi is missing.
-    """
     try:
         from curl_cffi import requests as curl_requests
-        # Impersonate a real Chrome browser connection
         session = curl_requests.Session(impersonate="chrome")
     except ImportError:
-        # Fallback to standard requests with realistic browser headers
         session = requests.Session()
         session.headers.update({
             "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
@@ -46,30 +38,16 @@ def get_robust_session():
     return session
 
 def fetch_from_stooq(ticker):
-    """
-    Keyless fallback database using direct CSV streams from Stooq.
-    Tailored specifically for the Indian Market.
-    """
     ticker_clean = ticker.upper().strip()
-    
-    # 1. Handle Indian Indices
     if ticker_clean.startswith('^'):
-        index_mapping = {
-            '^NSEI': '^NIFTY',    # Nifty 50
-            '^BSESN': '^SENSEX',  # BSE Sensex
-        }
+        index_mapping = {'^NSEI': '^NIFTY', '^BSESN': '^SENSEX'}
         ticker_clean = index_mapping.get(ticker_clean, ticker_clean)
-        
-    # 2. Translate Yahoo's National Stock Exchange (.NS) to Stooq's format (.IN)
     elif ticker_clean.endswith('.NS'):
         ticker_clean = ticker_clean.replace('.NS', '.IN')
-        
-    # 3. Handle raw entries fallback
     elif '.' not in ticker_clean:
         ticker_clean = f"{ticker_clean}.IN"
         
     url = f"https://stooq.com/q/d/l/?s={ticker_clean}&i=d"
-    
     df = pd.read_csv(url)
     if df.empty or 'Date' not in df.columns:
         raise ValueError(f"Could not locate '{ticker_clean}' in backup database.")
@@ -78,23 +56,18 @@ def fetch_from_stooq(ticker):
     df.set_index('Date', inplace=True)
     df.sort_index(ascending=True, inplace=True)
     
-    # Filter for the last 5 years
     five_years_ago = pd.Timestamp.now() - pd.DateOffset(years=5)
     df = df[df.index >= five_years_ago]
     
-    # Standardize columns
     required_cols = ['Open', 'High', 'Low', 'Close', 'Volume']
     df = df[required_cols]
     df.index.name = 'Date'
     return df
 
-# 2. Data Fetching and Math Engine (Cached)
 @st.cache_data(ttl=3600)
 def load_data(ticker, period="5y"):
     df = None
     info = {}
-    
-    # --- STEP 1: FETCH PRICE DATA ---
     try:
         session = get_robust_session()
         data = yf.Ticker(ticker, session=session)
@@ -106,13 +79,8 @@ def load_data(ticker, period="5y"):
         try:
             df = fetch_from_stooq(ticker)
         except Exception as stooq_error:
-            raise RuntimeError(
-                f"Yahoo blocked request: {yf_error}. "
-                f"Backup database also failed: {stooq_error}. "
-                "Verify your ticker is correct or run the app locally."
-            )
+            raise RuntimeError(f"Yahoo blocked: {yf_error}. Backup failed: {stooq_error}.")
             
-    # --- STEP 2: FETCH COMPANION METADATA ---
     try:
         session = get_robust_session()
         data = yf.Ticker(ticker, session=session)
@@ -126,21 +94,28 @@ def load_data(ticker, period="5y"):
 
 def calculate_indicators(df):
     df = df.copy()
-    # Simple Moving Averages
+    # 1. SMAs
     df['SMA_50'] = df['Close'].rolling(window=50).mean()
     df['SMA_200'] = df['Close'].rolling(window=200).mean()
     
-    # Relative Strength Index (RSI)
+    # 2. RSI
     delta = df['Close'].diff()
     gain = (delta.where(delta > 0, 0)).rolling(window=14).mean()
     loss = (-delta.where(delta < 0, 0)).rolling(window=14).mean()
     rs = gain / loss
     df['RSI'] = 100 - (100 / (1 + rs))
+    
+    # 3. MACD
+    exp1 = df['Close'].ewm(span=12, adjust=False).mean()
+    exp2 = df['Close'].ewm(span=26, adjust=False).mean()
+    df['MACD'] = exp1 - exp2
+    df['Signal_Line'] = df['MACD'].ewm(span=9, adjust=False).mean()
+    df['MACD_Hist'] = df['MACD'] - df['Signal_Line']
     return df
 
 # Run calculations
 if yfinance_ticker:
-    with st.spinner("Fetching historical market data..."):
+    with st.spinner("Analyzing market algorithms..."):
         try:
             raw_df, stock_info = load_data(yfinance_ticker, "5y")
             
@@ -150,7 +125,7 @@ if yfinance_ticker:
                 df = calculate_indicators(raw_df)
                 
                 # --- TAB SETUP ---
-                tab1, tab2 = st.tabs(["🔍 Live Signal Analysis", "📊 5-Year Strategy Backtest"])
+                tab1, tab2 = st.tabs(["🔍 Live Signal Analysis", "📊 Historical Strategy Backtest"])
                 
                 # ==========================================
                 # TAB 1: LIVE SIGNAL ANALYSIS
@@ -164,65 +139,108 @@ if yfinance_ticker:
                     latest_rsi = df['RSI'].iloc[-1] if not pd.isna(df['RSI'].iloc[-1]) else 50.0
                     latest_sma50 = df['SMA_50'].iloc[-1]
                     latest_sma200 = df['SMA_200'].iloc[-1]
+                    latest_macd = df['MACD'].iloc[-1]
+                    latest_signal = df['Signal_Line'].iloc[-1]
                     
-                    # Algorithm Score Engine
+                    # --- DUAL-ALGO MASTER VERDICT ENGINE ---
                     score = 0
                     reasons = []
                     
-                    # Trend Rules
+                    # Algo 1: SMA Crossover (Trend)
                     if not pd.isna(latest_sma50) and not pd.isna(latest_sma200):
                         if latest_sma50 > latest_sma200:
                             score += 1
-                            reasons.append("🟢 Bullish Trend (50 SMA > 200 SMA)")
+                            reasons.append("🟢 **SMA Crossover:** Bullish (Long-term upward trend intact)")
                         else:
                             score -= 1
-                            reasons.append("🔴 Bearish Trend (50 SMA < 200 SMA)")
-                    else:
-                        reasons.append("⚪ SMAs still calculating (need more historical data)")
-                        
-                    # Momentum Rules
+                            reasons.append("🔴 **SMA Crossover:** Bearish (Long-term downward trend dominates)")
+                    
+                    # Algo 2: MACD Crossover (Momentum/Short-Term Trend)
+                    if not pd.isna(latest_macd) and not pd.isna(latest_signal):
+                        if latest_macd > latest_signal:
+                            score += 1
+                            reasons.append("🟢 **MACD Crossover:** Bullish (Short-term upward momentum is accelerating)")
+                        else:
+                            score -= 1
+                            reasons.append("🔴 **MACD Crossover:** Bearish (Short-term downward pressure is building)")
+                            
+                    # Algo 3: RSI Overbought/Oversold Filter
                     if latest_rsi < 35:
                         score += 1
-                        reasons.append(f"🟢 Oversold Momentum (RSI {latest_rsi:.1f} < 35)")
+                        reasons.append(f"🟢 **RSI Index:** Highly Oversold ({latest_rsi:.1f}) - prime buying territory")
                     elif latest_rsi > 70:
                         score -= 1
-                        reasons.append(f"🔴 Overbought Momentum (RSI {latest_rsi:.1f} > 70)")
+                        reasons.append(f"🔴 **RSI Index:** Overbought ({latest_rsi:.1f}) - due for a cooling-off period")
                     else:
-                        reasons.append(f"🔵 Neutral Momentum (RSI is stable at {latest_rsi:.1f})")
+                        reasons.append(f"🔵 **RSI Index:** Neutral ({latest_rsi:.1f}) - trading in a healthy channel")
                     
-                    if score >= 1:
-                        recommendation, rec_color = "BUY", "green"
-                    elif score <= -1:
-                        recommendation, rec_color = "SELL", "red"
+                    # Translate Score to Actionable Investment Verdict
+                    if score >= 2:
+                        verdict = "🟢 YES - HIGH CONVICTION BUY"
+                        verdict_msg = "All major algorithmic signals have aligned bullishly. Excellent window to invest."
+                        bg_color = "#d4edda"
+                        text_color = "#155724"
+                    elif score == 1:
+                        verdict = "🟡 YES, BUT CAUTIOUS BUY"
+                        verdict_msg = "Overall momentum is positive, but some technical indicators suggest a sub-optimal entry price."
+                        bg_color = "#fff3cd"
+                        text_color = "#856404"
+                    elif score == 0:
+                        verdict = "⚪ HOLD / DO NOT INVEST YET"
+                        verdict_msg = "The algorithms are in conflict or moving sideways. Best to wait on the sidelines for a clear direction."
+                        bg_color = "#e2e3e5"
+                        text_color = "#383d41"
                     else:
-                        recommendation, rec_color = "HOLD / NEUTRAL", "orange"
+                        verdict = "🔴 NO - STAY OUT / HIGH RISK"
+                        verdict_msg = "Downward trends and selling pressure dominate. Investing right now carries elevated risk."
+                        bg_color = "#f8d7da"
+                        text_color = "#721c24"
 
-                    # Metrics Row (Using Rupees Symbol)
+                    # Custom Investment Recommendation Box
+                    st.markdown(f"""
+                    <div style="background-color:{bg_color}; padding:20px; border-radius:10px; border-left:8px solid {text_color}; margin-bottom: 25px;">
+                        <h3 style="margin:0; color:{text_color}; font-weight:bold;">INVESTMENT VERDICT: {verdict}</h3>
+                        <p style="margin:5px 0 0 0; color:{text_color}; font-size:16px;">{verdict_msg}</p>
+                    </div>
+                    """, unsafe_allow_html=True)
+
+                    # Quick Stats Cards
                     col1, col2, col3, col4 = st.columns(4)
                     col1.metric("Current Price", f"₹{latest_close:,.2f}", f"{price_change:+.2f} ({pct_change:+.2f}%)")
                     col2.metric("RSI (14-Day)", f"{latest_rsi:.1f}")
-                    col3.metric("50-Day SMA", f"₹{latest_sma50:,.2f}" if not pd.isna(latest_sma50) else "N/A")
-                    col4.metric("Recommendation", recommendation)
+                    col3.metric("MACD vs Signal", f"{latest_macd:.2f} / {latest_signal:.2f}")
+                    col4.metric("Score", f"{score:+.0f}")
 
                     st.markdown("---")
                     
                     chart_col, text_col = st.columns([3, 1])
                     with chart_col:
-                        st.subheader("Interactive Price Chart (NSE)")
-                        fig = go.Figure()
-                        # Use past 1 year (approx 252 trading days) for visual display
+                        st.subheader("Interactive Technical Analysis Charts")
                         chart_df = df[-252:] if len(df) > 252 else df
-                        fig.add_trace(go.Candlestick(x=chart_df.index,
+                        
+                        # Subplot 1: Candlesticks & SMAs
+                        fig1 = go.Figure()
+                        fig1.add_trace(go.Candlestick(x=chart_df.index,
                                         open=chart_df['Open'], high=chart_df['High'],
                                         low=chart_df['Low'], close=chart_df['Close'], name='Price'))
-                        fig.add_trace(go.Scatter(x=chart_df.index, y=chart_df['SMA_50'], line=dict(color='blue', width=1.5), name='50 SMA'))
-                        fig.add_trace(go.Scatter(x=chart_df.index, y=chart_df['SMA_200'], line=dict(color='orange', width=1.5), name='200 SMA'))
-                        fig.update_layout(xaxis_rangeslider_visible=False, height=450, margin=dict(l=0, r=0, t=20, b=0))
-                        st.plotly_chart(fig, use_container_width=True)
+                        fig1.add_trace(go.Scatter(x=chart_df.index, y=chart_df['SMA_50'], line=dict(color='blue', width=1.5), name='50 SMA'))
+                        fig1.add_trace(go.Scatter(x=chart_df.index, y=chart_df['SMA_200'], line=dict(color='orange', width=1.5), name='200 SMA'))
+                        fig1.update_layout(xaxis_rangeslider_visible=False, height=350, margin=dict(l=0, r=0, t=10, b=10))
+                        st.plotly_chart(fig1, use_container_width=True)
+                        
+                        # Subplot 2: Dedicated MACD Oscillator
+                        fig2 = go.Figure()
+                        fig2.add_trace(go.Scatter(x=chart_df.index, y=chart_df['MACD'], line=dict(color='purple', width=1.5), name='MACD Line'))
+                        fig2.add_trace(go.Scatter(x=chart_df.index, y=chart_df['Signal_Line'], line=dict(color='red', width=1.2, dash='dot'), name='Signal Line'))
+                        
+                        # Custom colors for MACD histogram bars (Green for positive, Red for negative)
+                        colors = ['green' if val >= 0 else 'red' for val in chart_df['MACD_Hist']]
+                        fig2.add_trace(go.Bar(x=chart_df.index, y=chart_df['MACD_Hist'], marker_color=colors, name='Histogram', opacity=0.5))
+                        fig2.update_layout(height=200, margin=dict(l=0, r=0, t=10, b=10))
+                        st.plotly_chart(fig2, use_container_width=True)
 
                     with text_col:
-                        st.subheader("Signal Rationale")
-                        st.markdown(f"**Verdict:** <span style='color:{rec_color}; font-size:20px; font-weight:bold;'>{recommendation}</span>", unsafe_allow_html=True)
+                        st.subheader("Why this Verdict?")
                         for r in reasons:
                             st.write(r)
                         
@@ -233,69 +251,66 @@ if yfinance_ticker:
                             market_cap = stock_info.get('marketCap', 0)
                             if market_cap:
                                 st.write(f"**Market Cap:** ₹{market_cap:,}")
-                            else:
-                                st.write("**Market Cap:** N/A")
                             st.write(f"**Forward P/E:** {stock_info.get('forwardPE', 'N/A')}")
                         else:
-                            st.info("Metadata profile unavailable due to cloud environment limits. Technical analytics remain fully active.")
+                            st.info("Metadata profile loaded from backup. Technical analytics remain fully active.")
                 
                 # ==========================================
                 # TAB 2: HISTORICAL BACKTEST
                 # ==========================================
                 with tab2:
                     st.subheader("Historical Simulation Engine (5-Year Lookback)")
-                    st.write("This simulator calculates exactly how much money you would have made executing SMA Crossover trades compared to buying and holding the stock.")
                     
-                    # Backtest Inputs (Set Default to ₹1,00,000)
-                    initial_capital = st.number_input("Starting Balance (₹)", min_value=100, max_value=10000000, value=100000, step=1000)
+                    # Backtest controls
+                    b_col1, b_col2 = st.columns(2)
+                    with b_col1:
+                        strategy_choice = st.selectbox("Select Backtesting Strategy:", ["SMA Crossover (50 vs 200)", "MACD Line Crossover"])
+                    with b_col2:
+                        initial_capital = st.number_input("Starting Balance (₹)", min_value=100, max_value=10000000, value=100000, step=1000)
                     
-                    # Clean up data for testing (remove days missing SMA values)
-                    bt_df = df.dropna(subset=['SMA_200']).copy()
+                    # Backtest Execution logic
+                    bt_df = df.dropna(subset=['SMA_200']).copy() if strategy_choice == "SMA Crossover (50 vs 200)" else df.dropna(subset=['Signal_Line']).copy()
                     
                     if bt_df.empty:
-                        st.error("Insufficient historical data to run backtest (requires at least 200 trading days).")
+                        st.error("Insufficient historical data to run backtest.")
                     else:
-                        # Simulation variables
-                        position = 0  # 0 means cash, 1 means holding stock
+                        position = 0
                         cash = initial_capital
                         shares = 0
                         portfolio_history = []
                         trade_count = 0
                         
-                        # Loop through chronological history
                         for date, row in bt_df.iterrows():
                             price = row['Close']
-                            sma50 = row['SMA_50']
-                            sma200 = row['SMA_200']
                             
-                            # 1. Buy Logic (Golden Cross)
-                            if position == 0 and sma50 > sma200:
+                            if strategy_choice == "SMA Crossover (50 vs 200)":
+                                buy_cond = row['SMA_50'] > row['SMA_200']
+                                sell_cond = row['SMA_50'] < row['SMA_200']
+                            else: # MACD Choice
+                                buy_cond = row['MACD'] > row['Signal_Line']
+                                sell_cond = row['MACD'] < row['Signal_Line']
+                                
+                            # Buy Execution
+                            if position == 0 and buy_cond:
                                 shares = cash / price
                                 cash = 0
                                 position = 1
                                 trade_count += 1
-                            
-                            # 2. Sell Logic (Death Cross)
-                            elif position == 1 and sma50 < sma200:
+                            # Sell Execution
+                            elif position == 1 and sell_cond:
                                 cash = shares * price
                                 shares = 0
                                 position = 0
                                 trade_count += 1
                                 
-                            # Track total portfolio value at the end of each day
-                            current_value = cash + (shares * price)
-                            portfolio_history.append(current_value)
+                            portfolio_history.append(cash + (shares * price))
                             
                         bt_df['Strategy_Value'] = portfolio_history
-                        
-                        # Benchmark: Buy & Hold Strategy
                         bh_shares = initial_capital / bt_df['Close'].iloc[0]
                         bt_df['Buy_Hold_Value'] = bh_shares * bt_df['Close']
                         
-                        # Final Metrics
                         final_strategy_val = bt_df['Strategy_Value'].iloc[-1]
                         final_bh_val = bt_df['Buy_Hold_Value'].iloc[-1]
-                        
                         strat_return = ((final_strategy_val - initial_capital) / initial_capital) * 100
                         bh_return = ((final_bh_val - initial_capital) / initial_capital) * 100
                         
@@ -306,22 +321,18 @@ if yfinance_ticker:
                         m3.metric("Buy & Hold Return", f"{bh_return:.2f}%")
                         m4.metric("Trades Executed", f"{trade_count}")
                         
-                        # Performance Verdict
                         st.markdown("---")
                         if final_strategy_val > final_bh_val:
-                            st.success(f"🏆 **Victory!** Your SMA Crossover strategy beat the market buy-and-hold strategy by **{strat_return - bh_return:.2f}%**.")
+                            st.success(f"🏆 **Victory!** {strategy_choice} beat the market buy-and-hold strategy by **{strat_return - bh_return:.2f}%**.")
                         else:
                             st.warning(f"⚠️ **Market Beats Strategy.** Buying and holding would have made you **{bh_return - strat_return:.2f}%** more than using this system.")
                         
-                        # Plotly Equity Curve Comparison Chart
-                        st.subheader("Equity Growth Curve: Strategy vs. Buy & Hold")
+                        # Plotly Chart
                         equity_fig = go.Figure()
-                        equity_fig.add_trace(go.Scatter(x=bt_df.index, y=bt_df['Strategy_Value'], 
-                                                        line=dict(color='green', width=2), name='SMA Strategy Balance'))
-                        equity_fig.add_trace(go.Scatter(x=bt_df.index, y=bt_df['Buy_Hold_Value'], 
-                                                        line=dict(color='grey', width=1.5, dash='dash'), name='Buy & Hold Benchmark'))
+                        equity_fig.add_trace(go.Scatter(x=bt_df.index, y=bt_df['Strategy_Value'], line=dict(color='green', width=2), name=f'{strategy_choice}'))
+                        equity_fig.add_trace(go.Scatter(x=bt_df.index, y=bt_df['Buy_Hold_Value'], line=dict(color='grey', width=1.5, dash='dash'), name='Buy & Hold Benchmark'))
                         equity_fig.update_layout(height=400, margin=dict(l=0, r=0, t=10, b=0), yaxis_title="Portfolio Value (₹)")
                         st.plotly_chart(equity_fig, use_container_width=True)
 
         except Exception as e:
-            st.error(f"Could not load data for backtesting: {e}")
+            st.error(f"Could not complete calculation run: {e}")
