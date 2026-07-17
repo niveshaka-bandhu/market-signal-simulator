@@ -22,7 +22,7 @@ if not raw_ticker_input.startswith('^') and '.' not in raw_ticker_input:
 else:
     yfinance_ticker = raw_ticker_input
 
-# Sidebar Toggle Options for Deep Customization
+# Sidebar Toggle Options
 st.sidebar.markdown("---")
 st.sidebar.subheader("Technical Overlays")
 show_bollinger = st.sidebar.checkbox("Show Bollinger Bands", value=True)
@@ -137,7 +137,12 @@ if yfinance_ticker:
                 df = calculate_indicators(raw_df)
                 
                 # Setup Tabs
-                tab1, tab2, tab3 = st.tabs(["🔍 Live Deep Analysis", "📊 Historical Backtest", "📈 Volatility & Risk Metrics"])
+                tab1, tab2, tab3, tab4 = st.tabs([
+                    "🔍 Live Deep Analysis", 
+                    "📊 Historical Backtest", 
+                    "📈 Volatility & Risk Metrics",
+                    "💎 Intrinsic Value Calculators"
+                ])
                 
                 # Get common data points
                 latest_close = df['Close'].iloc[-1]
@@ -193,10 +198,10 @@ if yfinance_ticker:
                     if not pd.isna(latest_bbu) and not pd.isna(latest_bbl):
                         if latest_close >= latest_bbu:
                             score -= 1
-                            reasons.append("🔴 **Volatilty (BB):** Overextended (Price above Upper Bollinger Band)")
+                            reasons.append("🔴 **Volatility (BB):** Overextended (Price above Upper Bollinger Band)")
                         elif latest_close <= latest_bbl:
                             score += 1
-                            reasons.append("🟢 **Volatilty (BB):** Underextended (Price below Lower Bollinger Band)")
+                            reasons.append("🟢 **Volatility (BB):** Underextended (Price below Lower Bollinger Band)")
                     
                     # Investment Verdict Decisions
                     if score >= 2:
@@ -356,41 +361,116 @@ if yfinance_ticker:
                 # ==========================================
                 with tab3:
                     st.subheader("Deep Risk Analysis Profile")
-                    st.write("Before allocating actual capital, understand how this asset moves. Low volatility is better for stable dividend portfolios; high volatility is suited for risk-tolerant momentum traders.")
+                    st.write("Understand volatility, downside exposure, and standard deviation profile over the past 5 years.")
                     
-                    # 1. Daily Returns
                     df['Daily_Return'] = df['Close'].pct_change()
-                    
-                    # 2. Annualized Volatility
                     daily_vol = df['Daily_Return'].std()
                     ann_vol = daily_vol * np.sqrt(252) * 100
                     
-                    # 3. Maximum Drawdown (Peak to Trough decline)
                     rolling_max = df['Close'].cummax()
                     drawdowns = (df['Close'] - rolling_max) / rolling_max
                     max_drawdown = drawdowns.min() * 100
                     
-                    # Risk Cards
                     rc1, rc2, rc3 = st.columns(3)
-                    
-                    # Volatility classification
-                    if ann_vol < 15:
-                        vol_class = "Low Risk (Conservative)"
-                    elif 15 <= ann_vol < 30:
-                        vol_class = "Moderate Risk (Balanced)"
-                    else:
-                        vol_class = "High Risk (Aggressive)"
-                        
+                    vol_class = "Low Risk" if ann_vol < 15 else "Moderate Risk" if ann_vol < 30 else "High Risk"
                     rc1.metric("Annualized Volatility (Risk)", f"{ann_vol:.2f}%", vol_class, delta_color="off")
-                    rc2.metric("Maximum Historical Drawdown", f"{max_drawdown:.2f}%", "Worst Peak-to-Trough Decline", delta_color="inverse")
-                    rc3.metric("Daily Price Std. Dev (Standard Volatility)", f"₹{df['Close'].std():.2f}")
+                    rc2.metric("Maximum Historical Drawdown", f"{max_drawdown:.2f}%", "Deepest Drop from Peak", delta_color="inverse")
+                    rc3.metric("Standard Deviation of Price", f"₹{df['Close'].std():.2f}")
                     
                     st.markdown("---")
-                    
-                    # Detailed Risk Explainer
                     st.write("### How to read these Risk Metrics:")
-                    st.write(f"- **Annualized Volatility of {ann_vol:.1f}%:** This means over a given year, the asset's price is historically expected to deviate by up to plus or minus {ann_vol:.1f}% from its mean trend line.")
-                    st.write(f"- **Maximum Drawdown of {max_drawdown:.1f}%:** If you had invested at the absolute peak over the last 5 years, the deepest paper loss you would have had to endure before recovering was **{max_drawdown:.1f}%**.")
+                    st.write(f"- **Annualized Volatility ({ann_vol:.1f}%):** This indicates the standard price deviation range expected across 252 trading days.")
+                    st.write(f"- **Maximum Drawdown ({max_drawdown:.1f}%):** The historical maximum peak-to-trough paper loss experienced during market corrections.")
+
+                # ==========================================
+                # TAB 4: INTRINSIC & FAIR VALUE CALCULATORS
+                # ==========================================
+                with tab4:
+                    st.subheader("💎 Valuation Models & Intrinsic Calculations")
+                    st.write("Estimate the real fundamental fair value of the asset. Adjust the models using live parsed inputs below.")
+
+                    # Attempt to pull fundamental metrics from Yahoo, fallback gracefully to placeholders
+                    default_eps = float(stock_info.get('trailingEps', 25.0)) if stock_info.get('trailingEps') else 25.0
+                    default_bvps = float(stock_info.get('bookValue', 150.0)) if stock_info.get('bookValue') else 150.0
+                    default_fcf = float(stock_info.get('freeCashflow', 50000000000.0)) if stock_info.get('freeCashflow') else 50000000000.0
+                    default_shares = float(stock_info.get('sharesOutstanding', 1000000000.0)) if stock_info.get('sharesOutstanding') else 1000000000.0
+
+                    calc_col1, calc_col2 = st.columns(2)
+
+                    # --- MODEL A: BENJAMIN GRAHAM VALUE ---
+                    with calc_col1:
+                        st.markdown("### 🏛️ Graham's Fair Value Model")
+                        st.write("Best suited for dividend-paying, asset-heavy, mature blue-chip businesses.")
+                        
+                        eps_input = st.number_input("Earnings Per Share (EPS) - Trailing", value=default_eps)
+                        bvps_input = st.number_input("Book Value Per Share (BVPS)", value=default_bvps)
+                        
+                        if eps_input > 0 and bvps_input > 0:
+                            graham_fair_value = np.sqrt(22.5 * eps_input * bvps_input)
+                            
+                            # Calculate Margin of Safety
+                            graham_mos = ((graham_fair_value - latest_close) / graham_fair_value) * 100
+                            
+                            st.markdown(f"#### Calculated Graham Value: **₹{graham_fair_value:,.2f}**")
+                            
+                            if graham_mos > 20:
+                                st.success(f"💚 **Undervalued:** Stock trades at a **{graham_mos:.1f}%** discount to Graham Value.")
+                            elif 0 <= graham_mos <= 20:
+                                st.info(f"💛 **Fairly Valued:** Margin of Safety is thin (**{graham_mos:.1f}%**).")
+                            else:
+                                st.warning(f"❤️ **Overvalued:** Stock trades at a **{abs(graham_mos):.1f}%** premium over Graham Value.")
+                        else:
+                            st.warning("Graham model requires positive Earnings and positive Book Value.")
+
+                    # --- MODEL B: DISCOUNTED CASH FLOW (DCF) ---
+                    with calc_col2:
+                        st.markdown("### 🌀 Discounted Cash Flow (DCF) Model")
+                        st.write("Best suited for predicting values of growth equities and predictable high cash-flow generators.")
+                        
+                        fcf_input = st.number_input("Annual Free Cash Flow (FCF in ₹)", value=default_fcf)
+                        shares_input = st.number_input("Shares Outstanding", value=default_shares)
+                        
+                        g_rate = st.slider("Growth Rate (g) - Next 5 Years (%)", min_value=-5.0, max_value=40.0, value=12.0, step=0.5)
+                        d_rate = st.slider("Discount Rate / Hurdle Rate (r) (%)", min_value=5.0, max_value=25.0, value=11.0, step=0.5)
+                        t_rate = st.slider("Terminal Growth Rate (gn) (%)", min_value=1.0, max_value=8.0, value=4.5, step=0.1)
+
+                        if d_rate <= t_rate:
+                            st.error("Error: Discount Rate (r) must be strictly higher than the Terminal Growth Rate (gn).")
+                        else:
+                            # 5-Year Cash Flow Projections
+                            projected_fcf = []
+                            discount_factors = []
+                            present_values = []
+                            
+                            temp_fcf = fcf_input
+                            for year in range(1, 6):
+                                temp_fcf = temp_fcf * (1 + (g_rate / 100))
+                                projected_fcf.append(temp_fcf)
+                                
+                                discount_factor = 1 / ((1 + (d_rate / 100)) ** year)
+                                discount_factors.append(discount_factor)
+                                present_values.append(temp_fcf * discount_factor)
+                                
+                            sum_pv_fcf = sum(present_values)
+                            
+                            # Terminal Value calculation
+                            terminal_value = (projected_fcf[-1] * (1 + (t_rate / 100))) / ((d_rate - t_rate) / 100)
+                            pv_terminal_value = terminal_value / ((1 + (d_rate / 100)) ** 5)
+                            
+                            total_intrinsic_val = sum_pv_fcf + pv_terminal_value
+                            dcf_fair_value = total_intrinsic_val / shares_input
+                            
+                            # Calculate Margin of Safety
+                            dcf_mos = ((dcf_fair_value - latest_close) / dcf_fair_value) * 100
+                            
+                            st.markdown(f"#### Calculated DCF Fair Value: **₹{dcf_fair_value:,.2f}**")
+                            
+                            if dcf_mos > 20:
+                                st.success(f"💚 **Undervalued:** Trading at a **{dcf_mos:.1f}%** Margin of Safety.")
+                            elif 0 <= dcf_mos <= 20:
+                                st.info(f"💛 **Fairly Valued:** Margin of Safety is minor (**{dcf_mos:.1f}%**).")
+                            else:
+                                st.warning(f"❤️ **Overvalued:** Price is **{abs(dcf_mos):.1f}%** above estimated DCF value.")
 
         except Exception as e:
             st.error(f"Could not load data for analysis: {e}")
