@@ -4,10 +4,32 @@ import pandas as pd
 import numpy as np
 import plotly.graph_objects as go
 import requests
+import subprocess
+import os
 
 # 1. Page Configuration
 st.set_page_config(page_title="Indian Quant Deep-Dive Dashboard", layout="wide")
 st.title("📊 Indian Quant Trading & Deep-Dive Dashboard")
+
+# --- AUTO-INSTALL PLAYWRIGHT BINARIES (Required for openscreener in Cloud) ---
+@st.cache_resource
+def install_playwright_binaries():
+    """
+    Ensures Chromium is installed on the Streamlit server so openscreener 
+    can run headlessly in the cloud.
+    """
+    try:
+        # Check if playwright is already ready
+        subprocess.run(["playwright", "--version"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=True)
+    except Exception:
+        with st.spinner("Initializing headless browser modules for Screener.in connection..."):
+            try:
+                subprocess.run(["playwright", "install", "chromium"], check=True)
+            except Exception as e:
+                st.sidebar.error(f"Playwright installation failed: {e}")
+
+# Call the installer
+install_playwright_binaries()
 
 # --- SIDEBAR: Global User Inputs ---
 st.sidebar.header("Configuration")
@@ -98,6 +120,49 @@ def load_data(ticker, period="5y"):
         
     return df, info
 
+# --- NEW CACHED SCREENER.IN DATA LOADER (Option 3) ---
+@st.cache_data(ttl=86400) # Cache fundamental data for 24 hours to prevent unnecessary scrapes
+def load_screener_data(ticker):
+    """
+    Connects to Screener.in using openscreener library to fetch deep-dive fundamentals.
+    """
+    clean_symbol = ticker.split(".")[0].strip().upper()
+    
+    # Avoid scanning indices
+    if clean_symbol.startswith('^'):
+        return {"success": False, "error": "Indices are not supported on Screener.in stock module."}
+        
+    try:
+        from openscreener import Stock
+        stock = Stock(clean_symbol)
+        summary = stock.summary()
+        pros_cons = stock.pros_cons()
+        
+        return {
+            "success": True,
+            "company_name": summary.get("company_name", clean_symbol),
+            "ratios": summary.get("ratios", {}),
+            "pros": pros_cons.get("pros", []),
+            "cons": pros_cons.get("cons", [])
+        }
+    except Exception as e:
+        return {"success": False, "error": str(e)}
+
+def extract_ratio_value(ratios_dict, key_patterns):
+    """
+    Extracts a numeric float out of the various naming conventions in Screener's output.
+    """
+    for key, value in ratios_dict.items():
+        key_lower = key.lower().replace(" ", "_").replace("/", "_").replace("-", "_")
+        for pattern in key_patterns:
+            if pattern in key_lower:
+                try:
+                    clean_val = str(value).replace("%", "").replace(",", "").strip()
+                    return float(clean_val)
+                except ValueError:
+                    return value
+    return None
+
 def calculate_indicators(df):
     df = df.copy()
     # 1. SMAs
@@ -127,9 +192,11 @@ def calculate_indicators(df):
 
 # Run calculations
 if yfinance_ticker:
-    with st.spinner("Executing quant deep-dive logic..."):
+    # Trigger load for technicals and fundamentals in parallel
+    with st.spinner("Fetching data and analyzing quantitative structures..."):
         try:
             raw_df, stock_info = load_data(yfinance_ticker, "5y")
+            screener_data = load_screener_data(yfinance_ticker)
             
             if raw_df is None or raw_df.empty:
                 st.error("No data found. Please check the ticker symbol.")
@@ -190,7 +257,7 @@ if yfinance_ticker:
                         score -= 1.5
                         reasons.append(f"🔴 **Exhaustion (RSI):** Overbought ({latest_rsi:.1f}) - Buyers are exhausted")
                     else:
-                        reasons.append(f"🔵 **Exhaustion (RSI):** Neutral ({latest_rsi:.1f}) - Price channel stable")
+                        reasons.append(f"🔵 **Exhaustion (RSI):** Neutral ({latest_rsi:.1f})")
 
                     # 4. Bollinger Band Position
                     latest_bbu = df['BB_Upper'].iloc[-1]
@@ -275,19 +342,31 @@ if yfinance_ticker:
                         st.plotly_chart(fig, use_container_width=True)
 
                     with text_col:
-                        st.subheader("Deep Analysis Breakdown")
+                        st.subheader("Deep Technical Analysis")
                         for r in reasons:
                             st.write(r)
                             
-                        # Show calculated Fibonacci details explicitly in sidebar
-                        if show_fib:
-                            st.markdown("---")
-                            st.subheader("Calculated Fib Support Lines")
-                            highest_high = chart_df['High'].max()
-                            lowest_low = chart_df['Low'].min()
-                            diff = highest_high - lowest_low
-                            for l in [0.236, 0.382, 0.5, 0.618, 0.786]:
-                                st.write(f"**Level {l*100:.1f}%:** ₹{highest_high - (l * diff):,.2f}")
+                    # --- NEW: SCREENER.IN PROS & CONS UI CARD ---
+                    st.markdown("---")
+                    st.subheader("📋 Screener.in Qualitative Sentiment Analysis")
+                    if screener_data.get("success"):
+                        pro_col, con_col = st.columns(2)
+                        with pro_col:
+                            st.markdown("##### 🟢 Strengths / Pros")
+                            if screener_data.get("pros"):
+                                for pro in screener_data["pros"]:
+                                    st.write(f"✅ {pro}")
+                            else:
+                                st.write("Screener reports no immediate structural strengths.")
+                        with con_col:
+                            st.markdown("##### 🔴 Limitations / Cons")
+                            if screener_data.get("cons"):
+                                for con in screener_data["cons"]:
+                                    st.write(f"⚠️ {con}")
+                            else:
+                                st.write("Screener reports no immediate structural concerns.")
+                    else:
+                        st.info(f"Screener.in profile details unavailable: {screener_data.get('error', 'Unknown Error')}")
 
                 # ==========================================
                 # TAB 2: HISTORICAL BACKTEST
@@ -376,68 +455,73 @@ if yfinance_ticker:
                     rc1.metric("Annualized Volatility (Risk)", f"{ann_vol:.2f}%", vol_class, delta_color="off")
                     rc2.metric("Maximum Historical Drawdown", f"{max_drawdown:.2f}%", "Deepest Drop from Peak", delta_color="inverse")
                     rc3.metric("Standard Deviation of Price", f"₹{df['Close'].std():.2f}")
-                    
-                    st.markdown("---")
-                    st.write("### How to read these Risk Metrics:")
-                    st.write(f"- **Annualized Volatility ({ann_vol:.1f}%):** This indicates the standard price deviation range expected across 252 trading days.")
-                    st.write(f"- **Maximum Drawdown ({max_drawdown:.1f}%):** The historical maximum peak-to-trough paper loss experienced during market corrections.")
 
                 # ==========================================
                 # TAB 4: INTRINSIC & FAIR VALUE CALCULATORS
                 # ==========================================
                 with tab4:
                     st.subheader("💎 Valuation Models & Intrinsic Calculations")
-                    st.write("Estimate the real fundamental fair value of the asset. Adjust the models using live parsed inputs below.")
+                    st.write("Estimate fundamental fair value using inputs extracted live from **Screener.in**.")
 
-                    # Attempt to pull fundamental metrics from Yahoo, fallback gracefully to placeholders
-                    default_eps = float(stock_info.get('trailingEps', 25.0)) if stock_info.get('trailingEps') else 25.0
-                    default_bvps = float(stock_info.get('bookValue', 150.0)) if stock_info.get('bookValue') else 150.0
-                    default_fcf = float(stock_info.get('freeCashflow', 50000000000.0)) if stock_info.get('freeCashflow') else 50000000000.0
-                    default_shares = float(stock_info.get('sharesOutstanding', 1000000000.0)) if stock_info.get('sharesOutstanding') else 1000000000.0
+                    # --- RESOLVE INPUTS FROM SCREENER OR FALLBACK ---
+                    screener_ratios = screener_data.get("ratios", {}) if screener_data.get("success") else {}
+                    
+                    # Extract ratios safely using keyword mapping
+                    sc_pe = extract_ratio_value(screener_ratios, ["stock_p_e", "pe", "p_e"])
+                    sc_bv = extract_ratio_value(screener_ratios, ["book_value", "bvps"])
+                    sc_mcap = extract_ratio_value(screener_ratios, ["market_cap", "m_cap"])
+                    
+                    # Derive EPS from PE and Price: EPS = Close / PE
+                    if sc_pe and sc_pe > 0:
+                        calculated_eps = latest_close / sc_pe
+                    else:
+                        calculated_eps = float(stock_info.get('trailingEps', 25.0)) if stock_info.get('trailingEps') else 25.0
+                        
+                    derived_bvps = sc_bv if sc_bv else float(stock_info.get('bookValue', 150.0)) if stock_info.get('bookValue') else 150.0
+                    derived_mcap = sc_mcap * 10000000 if sc_mcap else float(stock_info.get('marketCap', 100000000000.0)) if stock_info.get('marketCap') else 100000000000.0
+                    
+                    # Derived Shares Outstanding: MCAP / Close
+                    derived_shares = derived_mcap / latest_close
 
                     calc_col1, calc_col2 = st.columns(2)
 
                     # --- MODEL A: BENJAMIN GRAHAM VALUE ---
                     with calc_col1:
                         st.markdown("### 🏛️ Graham's Fair Value Model")
-                        st.write("Best suited for dividend-paying, asset-heavy, mature blue-chip businesses.")
+                        st.write("Based on Graham's defensive investment criteria.")
                         
-                        eps_input = st.number_input("Earnings Per Share (EPS) - Trailing", value=default_eps)
-                        bvps_input = st.number_input("Book Value Per Share (BVPS)", value=default_bvps)
+                        eps_input = st.number_input("Earnings Per Share (EPS)", value=float(calculated_eps))
+                        bvps_input = st.number_input("Book Value Per Share (BVPS)", value=float(derived_bvps))
                         
                         if eps_input > 0 and bvps_input > 0:
                             graham_fair_value = np.sqrt(22.5 * eps_input * bvps_input)
-                            
-                            # Calculate Margin of Safety
                             graham_mos = ((graham_fair_value - latest_close) / graham_fair_value) * 100
                             
                             st.markdown(f"#### Calculated Graham Value: **₹{graham_fair_value:,.2f}**")
-                            
                             if graham_mos > 20:
-                                st.success(f"💚 **Undervalued:** Stock trades at a **{graham_mos:.1f}%** discount to Graham Value.")
+                                st.success(f"✅ **Undervalued:** Stock trades at a **{gra_mos:.1f}%** discount to Graham Value." if 'gra_mos' in locals() else f"✅ **Undervalued:** Trades at a **{graham_mos:.1f}%** discount.")
                             elif 0 <= graham_mos <= 20:
-                                st.info(f"💛 **Fairly Valued:** Margin of Safety is thin (**{graham_mos:.1f}%**).")
+                                st.info(f"💛 **Fairly Valued:** Margin of Safety is tight (**{graham_mos:.1f}%**).")
                             else:
-                                st.warning(f"❤️ **Overvalued:** Stock trades at a **{abs(graham_mos):.1f}%** premium over Graham Value.")
+                                st.warning(f"⚠️ **Overvalued:** Trades at a **{abs(graham_mos):.1f}%** premium.")
                         else:
                             st.warning("Graham model requires positive Earnings and positive Book Value.")
 
                     # --- MODEL B: DISCOUNTED CASH FLOW (DCF) ---
                     with calc_col2:
                         st.markdown("### 🌀 Discounted Cash Flow (DCF) Model")
-                        st.write("Best suited for predicting values of growth equities and predictable high cash-flow generators.")
+                        st.write("Project future cash flows discounted to present value.")
                         
-                        fcf_input = st.number_input("Annual Free Cash Flow (FCF in ₹)", value=default_fcf)
-                        shares_input = st.number_input("Shares Outstanding", value=default_shares)
+                        fcf_input = st.number_input("Free Cash Flow (FCF in ₹)", value=float(derived_mcap * 0.05)) # Estimate FCF as 5% of MCAP if missing
+                        shares_input = st.number_input("Shares Outstanding", value=float(derived_shares))
                         
-                        g_rate = st.slider("Growth Rate (g) - Next 5 Years (%)", min_value=-5.0, max_value=40.0, value=12.0, step=0.5)
-                        d_rate = st.slider("Discount Rate / Hurdle Rate (r) (%)", min_value=5.0, max_value=25.0, value=11.0, step=0.5)
+                        g_rate = st.slider("Growth Rate (g) (%)", min_value=-5.0, max_value=40.0, value=12.0, step=0.5)
+                        d_rate = st.slider("Discount Rate (r) (%)", min_value=5.0, max_value=25.0, value=11.0, step=0.5)
                         t_rate = st.slider("Terminal Growth Rate (gn) (%)", min_value=1.0, max_value=8.0, value=4.5, step=0.1)
 
                         if d_rate <= t_rate:
                             st.error("Error: Discount Rate (r) must be strictly higher than the Terminal Growth Rate (gn).")
                         else:
-                            # 5-Year Cash Flow Projections
                             projected_fcf = []
                             discount_factors = []
                             present_values = []
@@ -452,25 +536,20 @@ if yfinance_ticker:
                                 present_values.append(temp_fcf * discount_factor)
                                 
                             sum_pv_fcf = sum(present_values)
-                            
-                            # Terminal Value calculation
                             terminal_value = (projected_fcf[-1] * (1 + (t_rate / 100))) / ((d_rate - t_rate) / 100)
                             pv_terminal_value = terminal_value / ((1 + (d_rate / 100)) ** 5)
                             
                             total_intrinsic_val = sum_pv_fcf + pv_terminal_value
                             dcf_fair_value = total_intrinsic_val / shares_input
-                            
-                            # Calculate Margin of Safety
                             dcf_mos = ((dcf_fair_value - latest_close) / dcf_fair_value) * 100
                             
                             st.markdown(f"#### Calculated DCF Fair Value: **₹{dcf_fair_value:,.2f}**")
-                            
                             if dcf_mos > 20:
-                                st.success(f"💚 **Undervalued:** Trading at a **{dcf_mos:.1f}%** Margin of Safety.")
+                                st.success(f"✅ **Undervalued:** Trading at a **{dcf_mos:.1f}%** Margin of Safety.")
                             elif 0 <= dcf_mos <= 20:
                                 st.info(f"💛 **Fairly Valued:** Margin of Safety is minor (**{dcf_mos:.1f}%**).")
                             else:
-                                st.warning(f"❤️ **Overvalued:** Price is **{abs(dcf_mos):.1f}%** above estimated DCF value.")
+                                st.warning(f"⚠️ **Overvalued:** Price is **{abs(dcf_mos):.1f}%** above estimated DCF value.")
 
         except Exception as e:
-            st.error(f"Could not load data for analysis: {e}")
+            st.error(f"Could not complete calculation run: {e}")
