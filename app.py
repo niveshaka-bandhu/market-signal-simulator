@@ -435,27 +435,6 @@ if yfinance_ticker:
                         st.plotly_chart(equity_fig, use_container_width=True)
 
                 # ==========================================
-                # TAB 3: VOLATILITY & RISK METRICS
-                # ==========================================
-                with tab3:
-                    st.subheader("Deep Risk Analysis Profile")
-                    st.write("Assess historic standard deviation and drawback thresholds before deploying retail capital.")
-                    
-                    df['Daily_Return'] = df['Close'].pct_change()
-                    daily_vol = df['Daily_Return'].std()
-                    ann_vol = daily_vol * np.sqrt(252) * 100
-                    
-                    rolling_max = df['Close'].cummax()
-                    drawdowns = (df['Close'] - rolling_max) / rolling_max
-                    max_drawdown = drawdowns.min() * 100
-                    
-                    rc1, rc2, rc3 = st.columns(3)
-                    vol_class = "Low Risk" if ann_vol < 15 else "Moderate Risk" if ann_vol < 30 else "High Risk"
-                    rc1.metric("Annualized Volatility", f"{ann_vol:.2f}%", vol_class, delta_color="off")
-                    rc2.metric("Maximum Historical Drawdown", f"{max_drawdown:.2f}%", "Worst-case drop from absolute peak", delta_color="inverse")
-                    rc3.metric("Standard Deviation of Price", f"₹{df['Close'].std():.2f}")
-
-                # ==========================================
                 # TAB 4: INTRINSIC & FAIR VALUE CALCULATORS
                 # ==========================================
                 with tab4:
@@ -464,20 +443,46 @@ if yfinance_ticker:
 
                     screener_ratios = screener_data.get("ratios", {}) if screener_data.get("success") else {}
                     
-                    # Extract fundamental constants
+                    # Extract raw ratios
                     sc_pe = extract_ratio_value(screener_ratios, ["stock_p_e", "pe", "p_e"])
                     sc_bv = extract_ratio_value(screener_ratios, ["book_value", "bvps"])
                     sc_mcap = extract_ratio_value(screener_ratios, ["market_cap", "m_cap"])
                     
-                    # Back-calculate EPS from PE ratio
+                    # 1. LATEST CLOSE (CMP)
+                    cmp = float(latest_close)
+
+                    # 2. ROBUST DYNAMIC EPS CALCULATION (CMP / PE = EPS)
+                    # Always prioritizes ratios because they adjust for splits/bonuses instantly
+                    derived_pe = None
                     if sc_pe and sc_pe > 0:
-                        calculated_eps = latest_close / sc_pe
+                        derived_pe = sc_pe
+                    elif stock_info.get('trailingPE') and stock_info.get('trailingPE') > 0:
+                        derived_pe = float(stock_info.get('trailingPE'))
+                        
+                    if derived_pe:
+                        calculated_eps = cmp / derived_pe
                     else:
                         calculated_eps = float(stock_info.get('trailingEps', 25.0)) if stock_info.get('trailingEps') else 25.0
                         
-                    derived_bvps = sc_bv if sc_bv else float(stock_info.get('bookValue', 150.0)) if stock_info.get('bookValue') else 150.0
+                    # 3. ROBUST DYNAMIC BVPS CALCULATION (CMP / PB = BVPS)
+                    if sc_bv and sc_bv > 0:
+                        derived_bvps = sc_bv
+                    else:
+                        derived_pb = None
+                        sc_pb = extract_ratio_value(screener_ratios, ["price_to_book", "pb", "p_b"])
+                        if sc_pb and sc_pb > 0:
+                            derived_pb = sc_pb
+                        elif stock_info.get('priceToBook') and stock_info.get('priceToBook') > 0:
+                            derived_pb = float(stock_info.get('priceToBook'))
+                            
+                        if derived_pb:
+                            derived_bvps = cmp / derived_pb
+                        else:
+                            derived_bvps = float(stock_info.get('bookValue', 150.0)) if stock_info.get('bookValue') else 150.0
+
+                    # 4. MARKET CAP & SHARE COUNT
                     derived_mcap = sc_mcap * 10000000 if sc_mcap else float(stock_info.get('marketCap', 100000000000.0)) if stock_info.get('marketCap') else 100000000000.0
-                    derived_shares = derived_mcap / latest_close
+                    derived_shares = derived_mcap / cmp
 
                     calc_col1, calc_col2 = st.columns(2)
 
@@ -486,12 +491,12 @@ if yfinance_ticker:
                         st.markdown("### 🏛️ Graham's Fair Value Model")
                         st.write("Assesses asset-to-earnings consistency for mature companies.")
                         
-                        eps_input = st.number_input("Earnings Per Share (EPS)", value=float(calculated_eps))
-                        bvps_input = st.number_input("Book Value Per Share (BVPS)", value=float(derived_bvps))
+                        eps_input = st.number_input("Earnings Per Share (EPS)", value=float(calculated_eps), format="%.2f")
+                        bvps_input = st.number_input("Book Value Per Share (BVPS)", value=float(derived_bvps), format="%.2f")
                         
                         if eps_input > 0 and bvps_input > 0:
                             graham_fair_value = np.sqrt(22.5 * eps_input * bvps_input)
-                            graham_mos = ((graham_fair_value - latest_close) / graham_fair_value) * 100
+                            graham_mos = ((graham_fair_value - cmp) / graham_fair_value) * 100
                             
                             st.markdown(f"#### Calculated Graham Value: **₹{graham_fair_value:,.2f}**")
                             if graham_mos > 20:
