@@ -7,14 +7,32 @@ import requests
 from datetime import datetime
 
 # ==========================================
-# 1. PAGE CONFIGURATION & MOBILE STYLING
+# 1. PAGE CONFIGURATION & CUSTOM FONTS CSS
 # ==========================================
 st.set_page_config(page_title="Indian Quant Verdict Dashboard", layout="wide")
-st.title("🛡️ Institutional Quant Verdict & Analytics Dashboard")
 
-# Global CSS Injection for Scannability & Sticky Elements
+# Custom CSS to downscale massive headers and clean up paddings
 st.markdown("""
 <style>
+    /* Scale down default large fonts */
+    h1 {
+        font-size: 26px !important;
+        font-weight: 700 !important;
+        margin-bottom: 10px !important;
+    }
+    h2 {
+        font-size: 20px !important;
+        font-weight: 600 !important;
+        margin-top: 15px !important;
+        margin-bottom: 10px !important;
+    }
+    h3 {
+        font-size: 16px !important;
+        font-weight: 600 !important;
+        margin-top: 10px !important;
+    }
+    
+    /* Freeze table headers dynamically */
     th {
         position: -webkit-sticky;
         position: sticky;
@@ -25,31 +43,34 @@ st.markdown("""
     div[data-testid="stTable"] {
         overflow-x: auto;
     }
-    .verdict-box {
-        padding: 20px;
-        border-radius: 8px;
-        margin-bottom: 25px;
-    }
 </style>
 """, unsafe_allow_html=True)
 
-# ==========================================
-# 2. NAVIGATION SIDEBAR CONTROLLER
-# ==========================================
-st.sidebar.header("🎯 Dashboard Workspace")
-dashboard_view = st.sidebar.radio(
-    "Select Page View:",
-    ["📈 Market View & Full Verdict", "🧬 Quantitative Deep-Dive"]
-)
+st.title("📊 Institutional Quant Verdict & Analytics Dashboard")
 
-st.sidebar.markdown("---")
-st.sidebar.header("Chart Settings")
-show_bollinger = st.sidebar.checkbox("Show Bollinger Bands", value=True)
-
-raw_ticker_input = st.sidebar.text_input(
-    "🔍 Search Indian Ticker (e.g., RELIANCE, TCS, HDFCBANK):", 
-    "RELIANCE"
-).upper().strip()
+# ==========================================
+# 2. HORIZONTAL CONTROL TOP-BAR (NO SIDEBAR)
+# ==========================================
+with st.container(border=True):
+    ctrl_col1, ctrl_col2, ctrl_col3 = st.columns([1.8, 1.0, 1.6])
+    
+    with ctrl_col1:
+        dashboard_view = st.radio(
+            "🎯 Workspace Selection:",
+            ["📈 Market View & Full Verdict", "🧬 Quantitative Deep-Dive"],
+            horizontal=True
+        )
+        
+    with ctrl_col2:
+        # Checkbox alignment spacer
+        st.markdown("<div style='height: 8px;'></div>", unsafe_allow_html=True)
+        show_bollinger = st.checkbox("Show Bollinger Bands", value=True)
+        
+    with ctrl_col3:
+        raw_ticker_input = st.text_input(
+            "🔍 Search Indian Ticker (e.g., RELIANCE, TCS, HDFCBANK):", 
+            "RELIANCE"
+        ).upper().strip()
 
 # Exchange Suffixing Logic
 if not raw_ticker_input.startswith('^') and '.' not in raw_ticker_input:
@@ -108,7 +129,7 @@ def load_data(ticker, period="5y"):
         if df.empty:
             raise ValueError("Empty response from Yahoo Finance.")
     except Exception as yf_error:
-        st.sidebar.warning("Yahoo API limits reached. Fetching prices from Stooq fallback...")
+        st.warning("Yahoo API limits reached. Fetching prices from Stooq fallback...")
         try:
             df = fetch_from_stooq(ticker)
         except Exception as stooq_error:
@@ -193,7 +214,6 @@ if yfinance_ticker:
                 price_change = latest_close - df['Close'].iloc[-2]
                 pct_change = (price_change / df['Close'].iloc[-2]) * 100
                 
-                # News Filter
                 clean_news_stream = []
                 for item in stock_news:
                     if item.get('title') and str(item.get('title')).strip().lower() != "none" and item.get('link') and item.get('providerPublishTime', 0) > 0:
@@ -205,7 +225,6 @@ if yfinance_ticker:
                 bull_points = []
                 bear_points = []
                 
-                # Vector 1: Technical Alignment
                 latest_rsi = df['RSI'].iloc[-1] if not pd.isna(df['RSI'].iloc[-1]) else 50.0
                 latest_sma50 = df['SMA_50'].iloc[-1]
                 latest_sma200 = df['SMA_200'].iloc[-1]
@@ -220,7 +239,6 @@ if yfinance_ticker:
                 if latest_macd_hist > 0: bull_points.append("MACD histogram shows positive expansion above signal threshold lines.")
                 else: bear_points.append("MACD momentum shows near-term bearish convergence.")
                 
-                # Vector 2: Fundamental Strengths
                 roe = stock_info.get('returnOnEquity')
                 operating_margin = stock_info.get('operatingMargins')
                 if roe and roe >= 0.15: bull_points.append(f"High Capital Return Efficiency: ROE sits optimally at {roe*100:.2f}%.")
@@ -228,13 +246,11 @@ if yfinance_ticker:
                 
                 if operating_margin and operating_margin > 0.12: bull_points.append(f"Strong operational baseline health with core margins at {operating_margin*100:.2f}%.")
                 
-                # Vector 3: Capital Structure & Debt Risk
                 debt_to_equity = stock_info.get('debtToEquity')
                 beta_val = stock_info.get('beta')
                 if debt_to_equity and debt_to_equity > 150: bear_points.append(f"Leverage Flag: High Debt-to-Equity balance noted at {debt_to_equity/100:.2f}.")
                 elif debt_to_equity and debt_to_equity <= 100: bull_points.append("Protected Capital Base: Leverage models track safely with clean debt levels.")
                 
-                # Vector 4: Fair Value Margin of Safety (MoS) Check
                 yf_eps = stock_info.get('trailingEps', 0)
                 yf_bvps = stock_info.get('bookValue', 0)
                 graham_val = np.sqrt(22.5 * yf_eps * yf_bvps) if (yf_eps and yf_bvps and yf_eps > 0 and yf_bvps > 0) else None
@@ -245,7 +261,6 @@ if yfinance_ticker:
                 elif graham_val and latest_close > (graham_val * 1.4):
                     bear_points.append("Trading at a significant premium above historical Graham Intrinsic multiples.")
 
-                # Calculate Comprehensive Verdict
                 total_signals = len(bull_points) + len(bear_points)
                 bull_ratio = len(bull_points) / total_signals if total_signals > 0 else 0.5
                 
@@ -270,13 +285,13 @@ if yfinance_ticker:
                 # VIEW 1: MARKET VIEW & COMPREHENSIVE VERDICT
                 # ==========================================
                 if dashboard_view == "📈 Market View & Full Verdict":
-                    st.header(f"📈 Strategic Asset Intelligence Center ({raw_ticker_input})")
+                    st.write(f"## 📈 Strategic Asset Intelligence Center ({raw_ticker_input})")
                     
                     # Core High-Impact Verdict Block
                     st.markdown(f"""
-                    <div style="background-color:{box_bg}; border-left:6px solid {border_color}; padding:20px; border-radius:8px;">
-                        <h3 style="margin:0 0 10px 0; color:{accent_text}; font-weight:bold;">🔍 SYSTEM DISPATCH: {master_verdict}</h3>
-                        <p style="margin:0; color:{accent_text}; font-size:15px; line-height:1.5;"><strong>Executive Summary Analysis:</strong> {summary_desc}</p>
+                    <div style="background-color:{box_bg}; border-left:6px solid {border_color}; padding:15px; border-radius:8px;">
+                        <h2 style="margin:0 0 5px 0; color:{accent_text}; font-weight:bold; font-size:18px !important;">🔍 SYSTEM DISPATCH: {master_verdict}</h2>
+                        <p style="margin:0; color:{accent_text}; font-size:14px; line-height:1.4;"><strong>Executive Summary Analysis:</strong> {summary_desc}</p>
                     </div>
                     """, unsafe_allow_html=True)
                     
@@ -285,12 +300,12 @@ if yfinance_ticker:
                     # Split Columns for Bull vs Bear Factors
                     v_col1, v_col2 = st.columns(2)
                     with v_col1:
-                        st.markdown("### ✅ Positive Structural Drivers (Bulls)")
+                        st.write("### ✅ Positive Structural Drivers (Bulls)")
                         if bull_points:
                             for p in bull_points: st.markdown(f" * {p}")
                         else: st.write("No distinct positive algorithmic signals triggered.")
                     with v_col2:
-                        st.markdown("### ⚠️ Structural Risk Warnings (Bears)")
+                        st.write("### ⚠️ Structural Risk Warnings (Bears)")
                         if bear_points:
                             for p in bear_points: st.markdown(f" * {p}")
                         else: st.write("No severe structural risk vectors flagged.")
@@ -310,7 +325,7 @@ if yfinance_ticker:
                     chart_col, sidebar_news_col = st.columns([3, 1.2]) if clean_news_stream else (st.container(), None)
                     
                     with chart_col:
-                        st.subheader("📊 Price Action Engine")
+                        st.write("### 📊 Price Action Engine")
                         chart_df = df[-252:]
                         fig = go.Figure()
                         fig.add_trace(go.Candlestick(x=chart_df.index, open=chart_df['Open'], high=chart_df['High'], low=chart_df['Low'], close=chart_df['Close'], name='Price'))
@@ -324,7 +339,7 @@ if yfinance_ticker:
 
                     if clean_news_stream and sidebar_news_col:
                         with sidebar_news_col:
-                            st.subheader("📰 Real-time Headlines")
+                            st.write("### 📰 Real-time Headlines")
                             for item in clean_news_stream[:5]:
                                 pub_time = datetime.fromtimestamp(item.get('providerPublishTime')).strftime('%d %b %Y')
                                 st.markdown(f"**[{item.get('title')}]({item.get('link')})**  \n<small style='color:gray;'>{item.get('publisher')} | {pub_time}</small>\n---", unsafe_allow_html=True)
@@ -356,7 +371,7 @@ if yfinance_ticker:
 
                         calc_col1, calc_col2 = st.columns(2)
                         with calc_col1:
-                            st.markdown("#### 🏛️ Graham Valuation Model")
+                            st.write("### 🏛️ Graham Valuation Model")
                             eps_input = st.number_input("EPS", value=float(yf_eps) if yf_eps else 10.0, format="%.2f", key="core_eps")
                             bvps_input = st.number_input("BVPS", value=float(yf_bvps) if yf_bvps else 100.0, format="%.2f", key="core_bvps")
                             if eps_input > 0 and bvps_input > 0:
@@ -364,7 +379,7 @@ if yfinance_ticker:
                                 st.markdown(f"Calculated Graham Value: **₹{g_val:,.2f}**")
 
                         with calc_col2:
-                            st.markdown("#### 🌀 Multi-Stage DCF Model (₹ Crores)")
+                            st.write("### 🌀 Multi-Stage DCF Model (₹ Crores)")
                             fcf_input = st.number_input("FCF (₹ Crores)", value=float(yf_fcf_crores) if yf_fcf_crores else 500.0, format="%.2f", key="core_fcf")
                             shares_input = st.number_input("Shares Out (Crores)", value=float(yf_shares_crores) if yf_shares_crores else 50.0, format="%.2f", key="core_sh")
                             g_rate = st.slider("Growth Rate (%)", -5.0, 40.0, 12.0, 0.5, key="core_g")
@@ -380,7 +395,7 @@ if yfinance_ticker:
                 # VIEW 2: QUANTITATIVE DEEP-DIVE PAGE
                 # ==========================================
                 elif dashboard_view == "🧬 Quantitative Deep-Dive":
-                    st.header(f"🧬 Structured Analytics Deep-Dive Workspace ({raw_ticker_input})")
+                    st.write(f"## 🧬 Structured Analytics Deep-Dive Workspace ({raw_ticker_input})")
                     
                     quant_tab1, quant_tab2, quant_tab3, quant_tab4, quant_tab5, quant_tab6 = st.tabs([
                         "🧬 Multi-Factor Quality Matrix",
@@ -392,7 +407,7 @@ if yfinance_ticker:
                     ])
                     
                     with quant_tab1:
-                        st.subheader("🧬 Accounting & Solvency Factor Grid")
+                        st.write("### 🧬 Accounting & Solvency Factor Grid")
                         operating_margin = stock_info.get('operatingMargins')
                         
                         def fmt_pct(val): return f"{val * 100:.2f}%" if val is not None else "N/A"
@@ -405,7 +420,7 @@ if yfinance_ticker:
                         }
                         st.table(pd.DataFrame(factor_data))
                         
-                        st.markdown("### 🏢 Equity Block Allocation Matrix")
+                        st.write("### 🏢 Equity Block Allocation Matrix")
                         insider_share = stock_info.get('heldPercentInsiders', 0.0) * 100
                         inst_share = stock_info.get('heldPercentInstitutions', 0.0) * 100
                         public_share = max(0.0, 100.0 - (insider_share + inst_share))
@@ -416,7 +431,7 @@ if yfinance_ticker:
                         sh_col3.metric("Estimated Public Float", f"{public_share:.2f}%" if public_share < 100 else "N/A")
 
                     with quant_tab2:
-                        st.subheader("👥 Competitor Evaluation Matrix")
+                        st.write("### 👥 Competitor Evaluation Matrix")
                         default_peers = "INFY, WIPRO, HCLTECH" if "TCS" in yfinance_ticker else "RELIANCE.NS, ONGC.NS, BPCL.NS"
                         peer_input = st.text_input("Enter Peer Symbols (Comma Separated):", default_peers)
                         
@@ -443,7 +458,7 @@ if yfinance_ticker:
                             st.table(pd.DataFrame(peer_matrix))
 
                     with quant_tab3:
-                        st.subheader("📅 Adjustments & Historical Share Splits")
+                        st.write("### 📅 Adjustments & Historical Share Splits")
                         if not extended_actions.empty:
                             clean_actions = extended_actions.copy()
                             clean_actions.index = pd.to_datetime(clean_actions.index).strftime('%d %b %Y')
@@ -452,7 +467,7 @@ if yfinance_ticker:
                             st.info("No recorded corporate actions or adjustments tracked on this engine timeline.")
 
                     with quant_tab4:
-                        st.subheader("📊 Top-line vs Balance Income Vectors")
+                        st.write("### 📊 Top-line vs Balance Income Vectors")
                         rev_row = robust_find_row(extended_financials, "TotalRevenue")
                         net_row = robust_find_row(extended_financials, "NetIncome")
                         
@@ -470,7 +485,7 @@ if yfinance_ticker:
                             st.warning("Annual income statements are unavailable on this specific asset structure.")
 
                     with quant_tab5:
-                        st.subheader("🎲 30-Day Randomized Variance Walk Simulations")
+                        st.write("### 🎲 30-Day Randomized Variance Walk Simulations")
                         daily_vol = df['Daily_Return'].std()
                         if pd.isna(daily_vol) or daily_vol == 0: daily_vol = 0.015
                         
@@ -501,7 +516,7 @@ if yfinance_ticker:
                         """)
 
                     with quant_tab6:
-                        st.subheader("🕒 Historical Strategy Simulation Run")
+                        st.write("### 🕒 Historical Strategy Simulation Run")
                         b_col1, b_col2 = st.columns(2)
                         with b_col1: strategy_choice = st.selectbox("Select Strategy Rule Line:", ["SMA Crossover (50 vs 200)", "MACD Line Crossover"])
                         with b_col2: initial_capital = st.number_input("Starting Capital (₹)", value=100000)
