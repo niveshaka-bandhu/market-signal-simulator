@@ -4,7 +4,6 @@ import pandas as pd
 import numpy as np
 import plotly.graph_objects as go
 import requests
-from bs4 import BeautifulSoup
 
 # ==========================================
 # 1. PAGE CONFIGURATION & THEME SETUP
@@ -100,73 +99,6 @@ def load_data(ticker, period="5y"):
         
     return df, info
 
-# --- LIGHTWEIGHT BEAUTIFULSOUP SCREENER SCRAPER ---
-@st.cache_data(ttl=86400)
-def load_screener_data_light(ticker):
-    """
-    Scrapes Screener.in's key ratios, pros, and cons without a headless browser.
-    """
-    clean_symbol = ticker.split(".")[0].strip().upper()
-    if clean_symbol.startswith('^'):
-        return {"success": False, "error": "Indices not supported on Screener.in"}
-        
-    url = f"https://www.screener.in/company/{clean_symbol}/"
-    try:
-        response = requests.get(url, headers=get_robust_headers(), timeout=10)
-        if response.status_code != 200:
-            return {"success": False, "error": f"Failed HTTP response ({response.status_code})"}
-            
-        soup = BeautifulSoup(response.content, 'html.parser')
-        
-        # Parse Key Ratios
-        ratios = {}
-        ratios_container = soup.find('ul', id='top-ratios') or soup.find('div', class_='company-ratios')
-        if ratios_container:
-            for item in ratios_container.find_all('li'):
-                name_span = item.find('span', class_='name')
-                value_span = item.find('span', class_='number') or item.find_all('span')[-1]
-                if name_span and value_span:
-                    name = name_span.text.strip().replace(":", "")
-                    value = value_span.text.strip().replace('\n', '').replace('  ', ' ')
-                    ratios[name] = value
-
-        # Cloudflare/Elements parse verification check
-        if not ratios:
-            return {"success": False, "error": "Cloudflare bypass active or structure has changed."}
-
-        # Parse Pros and Cons
-        pros = []
-        cons = []
-        pros_section = soup.find('div', class_='pros')
-        cons_section = soup.find('div', class_='cons')
-        
-        if pros_section:
-            pros = [li.text.strip() for li in pros_section.find_all('li')]
-        if cons_section:
-            cons = [li.text.strip() for li in cons_section.find_all('li')]
-            
-        return {
-            "success": True,
-            "company_name": clean_symbol,
-            "ratios": ratios,
-            "pros": pros,
-            "cons": cons
-        }
-    except Exception as e:
-        return {"success": False, "error": str(e)}
-
-def extract_ratio_value(ratios_dict, key_patterns):
-    for key, value in ratios_dict.items():
-        key_lower = key.lower().replace(" ", "_").replace("/", "_").replace("-", "_")
-        for pattern in key_patterns:
-            if pattern in key_lower:
-                try:
-                    clean_val = str(value).replace("%", "").replace(",", "").strip()
-                    return float(clean_val)
-                except ValueError:
-                    return value
-    return None
-
 def calculate_indicators(df):
     df = df.copy()
     # SMAs
@@ -201,7 +133,6 @@ if yfinance_ticker:
     with st.spinner("Fetching market data and running calculations..."):
         try:
             raw_df, stock_info = load_data(yfinance_ticker, "5y")
-            screener_data = load_screener_data_light(yfinance_ticker)
             
             if raw_df is None or raw_df.empty:
                 st.error("No data returned. Please verify ticker symbols.")
@@ -236,7 +167,6 @@ if yfinance_ticker:
                     score = 0
                     reasons = []
                     
-                    # 1. Long-Term Trend
                     if not pd.isna(latest_sma50) and not pd.isna(latest_sma200):
                         if latest_sma50 > latest_sma200:
                             score += 1
@@ -245,7 +175,6 @@ if yfinance_ticker:
                             score -= 1
                             reasons.append("🔴 **Long-Term Trend (SMA):** Bearish (50 SMA is below 200 SMA)")
                     
-                    # 2. Short-Term Momentum (MACD)
                     if not pd.isna(latest_macd) and not pd.isna(latest_signal):
                         if latest_macd > latest_signal:
                             score += 1
@@ -254,7 +183,6 @@ if yfinance_ticker:
                             score -= 1
                             reasons.append("🔴 **Short-Term Momentum (MACD):** Bearish crossover detected")
                             
-                    # 3. Exhaustion Index (RSI)
                     if latest_rsi < 30:
                         score += 1.5
                         reasons.append(f"🟢 **Exhaustion (RSI):** Oversold ({latest_rsi:.1f}) - Sellers are exhausted")
@@ -264,7 +192,6 @@ if yfinance_ticker:
                     else:
                         reasons.append(f"🔵 **Exhaustion (RSI):** Neutral ({latest_rsi:.1f}) - Trend is balanced")
 
-                    # 4. Bollinger Band Position
                     latest_bbu = df['BB_Upper'].iloc[-1]
                     latest_bbl = df['BB_Lower'].iloc[-1]
                     if not pd.isna(latest_bbu) and not pd.isna(latest_bbl):
@@ -275,7 +202,6 @@ if yfinance_ticker:
                             score += 1
                             reasons.append("🟢 **Volatility (BB):** Underextended (Price below Lower Bollinger Band)")
                     
-                    # Formulate Investment Verdict
                     if score >= 2:
                         verdict, verdict_msg, bg_color, text_color = "🟢 YES - HIGH CONVICTION BUY", "Technical parameters have aligned cleanly. The risk-to-reward ratio is in your favor.", "#d4edda", "#155724"
                     elif 0.5 <= score < 2:
@@ -300,47 +226,31 @@ if yfinance_ticker:
 
                     st.markdown("---")
                     
-                    # Custom Chart Interface
                     chart_col, text_col = st.columns([3, 1])
                     with chart_col:
                         st.subheader("Deep Technical Chart")
                         chart_df = df[-252:] if len(df) > 252 else df
-                        
                         fig = go.Figure()
                         
-                        # Base Candlestick Trace
-                        fig.add_trace(go.Candlestick(x=chart_df.index,
-                                        open=chart_df['Open'], high=chart_df['High'],
-                                        low=chart_df['Low'], close=chart_df['Close'], name='Price'))
+                        fig.add_trace(go.Candlestick(x=chart_df.index, open=chart_df['Open'], high=chart_df['High'], low=chart_df['Low'], close=chart_df['Close'], name='Price'))
                         
-                        # Bollinger Bands Visuals
                         if show_bollinger:
                             fig.add_trace(go.Scatter(x=chart_df.index, y=chart_df['BB_Upper'], line=dict(color='rgba(173,216,230,0.4)', width=1), name='BB Upper'))
                             fig.add_trace(go.Scatter(x=chart_df.index, y=chart_df['BB_Lower'], line=dict(color='rgba(173,216,230,0.4)', width=1), name='BB Lower', fill='tonexty', fillcolor='rgba(173,216,230,0.08)'))
                             fig.add_trace(go.Scatter(x=chart_df.index, y=chart_df['BB_Mid'], line=dict(color='grey', width=1, dash='dash'), name='BB Middle'))
                         
-                        # Fibonacci Retracement Levels Trace
                         if show_fib:
                             highest_high = chart_df['High'].max()
                             lowest_low = chart_df['Low'].min()
                             diff = highest_high - lowest_low
-                            
                             levels = [0.0, 0.236, 0.382, 0.5, 0.618, 0.786, 1.0]
                             colors = ['red', 'orange', 'yellow', 'green', 'blue', 'indigo', 'violet']
-                            
                             for level, color in zip(levels, colors):
                                 value = highest_high - (level * diff)
-                                fig.add_trace(go.Scatter(
-                                    x=[chart_df.index[0], chart_df.index[-1]],
-                                    y=[value, value],
-                                    mode="lines",
-                                    line=dict(color=color, width=1, dash="dashdot"),
-                                    name=f"Fib {level*100:.1f}%"
-                                ))
+                                fig.add_trace(go.Scatter(x=[chart_df.index[0], chart_df.index[-1]], y=[value, value], mode="lines", line=dict(color=color, width=1, dash="dashdot"), name=f"Fib {level*100:.1f}%"))
 
                         fig.add_trace(go.Scatter(x=chart_df.index, y=chart_df['SMA_50'], line=dict(color='blue', width=1.5), name='50 SMA'))
                         fig.add_trace(go.Scatter(x=chart_df.index, y=chart_df['SMA_200'], line=dict(color='orange', width=1.5), name='200 SMA'))
-                        
                         fig.update_layout(xaxis_rangeslider_visible=False, height=450, margin=dict(l=0, r=0, t=10, b=10))
                         st.plotly_chart(fig, use_container_width=True)
 
@@ -348,28 +258,6 @@ if yfinance_ticker:
                         st.subheader("Deep Technical Analysis")
                         for r in reasons:
                             st.write(r)
-                            
-                    # --- SCREENER.IN PROS & CONS VIEW ---
-                    st.markdown("---")
-                    st.subheader("📋 Screener.in Qualitative Sentiment Analysis")
-                    if screener_data.get("success"):
-                        pro_col, con_col = st.columns(2)
-                        with pro_col:
-                            st.markdown("##### 🟢 Strengths / Pros")
-                            if screener_data.get("pros"):
-                                for pro in screener_data["pros"]:
-                                    st.write(f"✅ {pro}")
-                            else:
-                                st.write("Screener reports no immediate structural strengths.")
-                        with con_col:
-                            st.markdown("##### 🔴 Limitations / Cons")
-                            if screener_data.get("cons"):
-                                for con in screener_data["cons"]:
-                                    st.write(f"⚠️ {con}")
-                            else:
-                                st.write("Screener reports no immediate structural concerns.")
-                    else:
-                        st.info("Screener.in profile details currently offline or blocked by Cloudflare.")
 
                 # ==========================================
                 # TAB 2: HISTORICAL BACKTEST
@@ -443,7 +331,6 @@ if yfinance_ticker:
                 # ==========================================
                 with tab3:
                     st.subheader("Deep Risk Analysis Profile")
-                    st.write("Assess historic standard deviation and drawback thresholds before deploying retail capital.")
                     
                     df['Daily_Return'] = df['Close'].pct_change()
                     daily_vol = df['Daily_Return'].std()
@@ -464,88 +351,67 @@ if yfinance_ticker:
                 # ==========================================
                 with tab4:
                     st.subheader("💎 Valuation Models & Intrinsic Calculations")
+                    st.info("📡 **Data Source:** Powered directly via Yahoo Finance Core Engine API API.")
                     
-                    screener_ratios = screener_data.get("ratios", {}) if (screener_data and screener_data.get("success")) else {}
-                    
-                    # 1. LATEST CLOSE (CMP)
+                    # 1. PARSE CORE YAHOO FINANCE VALUES
                     cmp = float(latest_close)
+                    yf_pe = stock_info.get('trailingPE')
+                    yf_eps = stock_info.get('trailingEps')
+                    yf_bvps = stock_info.get('bookValue')
+                    yf_mcap = stock_info.get('marketCap')
+                    yf_fcf = stock_info.get('freeCashflow')
+                    yf_shares = stock_info.get('sharesOutstanding')
 
-                    # 2. Extract raw ratios from Screener if success, else set baseline None
-                    auto_pe = extract_ratio_value(screener_ratios, ["stock_p_e", "pe", "p_e"])
-                    auto_bv = extract_ratio_value(screener_ratios, ["book_value", "bvps"])
-                    auto_mcap = extract_ratio_value(screener_ratios, ["market_cap", "m_cap"])
-                    auto_pb = extract_ratio_value(screener_ratios, ["price_to_book", "pb", "p_b"])
+                    # 2. DISCOVERY LOGIC FALLBACKS (In case individual object properties are missing)
+                    if not yf_eps and yf_pe and yf_pe > 0:
+                        yf_eps = cmp / yf_pe
+                    elif not yf_eps:
+                        yf_eps = 25.0
 
-                    # 3. Resolve Automated PE
-                    derived_pe = None
-                    if auto_pe and auto_pe > 0:
-                        derived_pe = auto_pe
-                    elif stock_info.get('trailingPE') and stock_info.get('trailingPE') > 0:
-                        derived_pe = float(stock_info.get('trailingPE'))
-                        
-                    # 4. Resolve Automated EPS
-                    if derived_pe and derived_pe > 0:
-                        auto_eps = cmp / derived_pe
-                    else:
-                        auto_eps = float(stock_info.get('trailingEps', 25.0)) if stock_info.get('trailingEps') else 25.0
-                        
-                    # 5. Resolve Automated BVPS
-                    if auto_bv and auto_bv > 0:
-                        auto_bvps = auto_bv
-                    else:
-                        derived_pb = auto_pb if auto_pb else (float(stock_info.get('priceToBook')) if stock_info.get('priceToBook') else None)
-                        auto_bvps = cmp / derived_pb if derived_pb else (float(stock_info.get('bookValue', 150.0)) if stock_info.get('bookValue') else 150.0)
+                    if not yf_pe and yf_eps > 0:
+                        yf_pe = cmp / yf_eps
+                    elif not yf_pe:
+                        yf_pe = 20.0
 
-                    # 6. Apply Preset Overrides (Solves Stale Yahoo/Blocked Screener data)
-                    clean_ticker_no_suffix = yfinance_ticker.split(".")[0].strip().upper()
-                    NIFTY_PRESETS = {
-                        "RELIANCE": {"pe": 23.1, "bvps": 668.0, "fcf_mcap_pct": 0.05, "growth": 12.0},
-                        "TCS": {"pe": 15.1, "bvps": 260.0, "fcf_mcap_pct": 0.06, "growth": 10.0},
-                        "INFY": {"pe": 15.3, "bvps": 229.4, "fcf_mcap_pct": 0.06, "growth": 10.0},
-                        "HDFCBANK": {"pe": 15.7, "bvps": 381.0, "fcf_mcap_pct": 0.04, "growth": 12.0},
-                    }
+                    if not yf_bvps:
+                        yf_bvps = 150.0
 
-                    using_preset = False
-                    if clean_ticker_no_suffix in NIFTY_PRESETS:
-                        preset = NIFTY_PRESETS[clean_ticker_no_suffix]
-                        default_eps = cmp / preset["pe"]
-                        default_bvps = preset["bvps"]
-                        using_preset = True
-                    else:
-                        default_eps = auto_eps
-                        default_bvps = auto_bvps
+                    if not yf_mcap:
+                        yf_mcap = cmp * (yf_shares if yf_shares else 100000000)
 
-                    # 7. MCAP & Share calculations
-                    derived_mcap = auto_mcap * 10000000 if auto_mcap else float(stock_info.get('marketCap', 100000000000.0)) if stock_info.get('marketCap') else 100000000000.0
-                    derived_shares = derived_mcap / cmp
+                    if not yf_shares:
+                        yf_shares = yf_mcap / cmp
 
-                    # --- ACTIVE API SYNC STATUS INDICATOR ---
-                    if using_preset:
-                        st.success(f"🎯 **Using Curated Presets:** Stale unadjusted metrics detected post-corporate actions. Loaded verified, split-adjusted benchmarks for **{clean_ticker_no_suffix}** (P/E: {preset['pe']}, BVPS: {preset['bvps']}).")
-                    elif screener_data.get("success"):
-                        st.success("📡 **Live API Sync:** Screener.in ratios parsed successfully.")
-                    else:
-                        st.warning("⚠️ **Screener.in API Blocked:** Falling back to Yahoo metrics. Please check and manually adjust inputs below if corporate actions (splits/bonuses) have occurred.")
+                    if not yf_fcf:
+                        yf_fcf = yf_mcap * 0.05  # Standard 5% Free Cash Flow Proxy fallback
+
+                    # 3. LIVE HUD DISPLAY PANEL
+                    st.markdown("### 📊 Yahoo Finance Raw Stream Overview")
+                    h1, h2, h3, h4 = st.columns(4)
+                    h1.metric("API Trailing P/E", f"{yf_pe:.2f}" if yf_pe else "N/A")
+                    h2.metric("API Book Value (BVPS)", f"₹{yf_bvps:,.2f}" if yf_bvps else "N/A")
+                    h3.metric("API Trailing EPS", f"₹{yf_eps:.2f}" if yf_eps else "N/A")
+                    h4.metric("Current Market Price (CMP)", f"₹{cmp:,.2f}")
 
                     st.markdown("---")
                     calc_col1, calc_col2 = st.columns(2)
 
-                    # --- MODEL A: BENJAMIN GRAHAM VALUE ---
+                    # --- MODEL A: BENJAMIN GRAHAM VALUE (FULLY EDITABLE OVERRIDE) ---
                     with calc_col1:
-                        st.markdown("### 🏛️ Graham's Fair Value Model")
-                        st.write("Adjust variables directly below if you want to override the loaded figures.")
+                        st.markdown("### 🏛 *Graham's Fair Value Model*")
+                        st.write("Adjust values below instantly if Yahoo's feed displays unadjusted/stale records:")
                         
                         eps_input = st.number_input(
                             "Earnings Per Share (EPS)", 
-                            value=float(default_eps), 
+                            value=float(yf_eps), 
                             format="%.2f",
-                            help="Current actual adjusted EPS."
+                            help="Edit this field directly to update valuation calculation."
                         )
                         bvps_input = st.number_input(
                             "Book Value Per Share (BVPS)", 
-                            value=float(default_bvps), 
+                            value=float(yf_bvps), 
                             format="%.2f",
-                            help="Current actual adjusted Book Value."
+                            help="Edit this field directly to update valuation calculation."
                         )
                         
                         if eps_input > 0 and bvps_input > 0:
@@ -567,8 +433,8 @@ if yfinance_ticker:
                         st.markdown("### 🌀 Discounted Cash Flow (DCF) Model")
                         st.write("Project and discount company cash flows.")
                         
-                        fcf_input = st.number_input("Free Cash Flow (FCF in ₹)", value=float(derived_mcap * 0.05))
-                        shares_input = st.number_input("Shares Outstanding", value=float(derived_shares))
+                        fcf_input = st.number_input("Free Cash Flow (FCF in ₹)", value=float(yf_fcf))
+                        shares_input = st.number_input("Shares Outstanding", value=float(yf_shares))
                         
                         g_rate = st.slider("Expected Growth Rate (g) (%)", min_value=-5.0, max_value=40.0, value=12.0, step=0.5)
                         d_rate = st.slider("Discount Rate (r) (%)", min_value=5.0, max_value=25.0, value=11.0, step=0.5)
