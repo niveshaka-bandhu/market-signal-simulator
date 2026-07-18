@@ -15,6 +15,7 @@ st.title("📊 Indian Quant Trading & Deep-Dive Dashboard")
 # Global CSS Injection to Freeze Table Headers and Handle Long Tables
 st.markdown("""
 <style>
+    /* Freeze table headers dynamically during scrolling */
     th {
         position: -webkit-sticky;
         position: sticky;
@@ -22,6 +23,7 @@ st.markdown("""
         background-color: #f8f9fa !important;
         z-index: 5;
     }
+    /* Ensure markdown tables render cleanly on mobile viewports */
     div[data-testid="stTable"] {
         overflow-x: auto;
     }
@@ -39,6 +41,7 @@ with col_search:
         "RELIANCE"
     ).upper().strip()
 
+# Exchange Suffixing Logic
 if not raw_ticker_input.startswith('^') and '.' not in raw_ticker_input:
     yfinance_ticker = f"{raw_ticker_input}.NS"
 else:
@@ -121,7 +124,7 @@ def load_data(ticker, period="5y"):
 
 @st.cache_data(ttl=3600)
 def load_extended_quant_data(ticker):
-    """Pulls corporate financials, balance sheets, and historical actions."""
+    """Pulls corporate financials and historical corporate actions."""
     try:
         t = yf.Ticker(ticker)
         actions = t.actions
@@ -181,7 +184,7 @@ if yfinance_ticker:
             else:
                 df = calculate_indicators(raw_df)
                 
-                # Master Tab Setup (All 4 New Request Frameworks Appended)
+                # Master 9-Tab Dashboard Framework
                 tab1, tab2, tab3, tab4, tab5, tab6, tab7, tab8, tab9 = st.tabs([
                     "🔍 Technical Radar", 
                     "🧬 Advanced Quant Factors",
@@ -198,6 +201,7 @@ if yfinance_ticker:
                 price_change = latest_close - df['Close'].iloc[-2]
                 pct_change = (price_change / df['Close'].iloc[-2]) * 100
                 
+                # Bulletproof News Stream Filter
                 clean_news_stream = []
                 for item in stock_news:
                     if item.get('title') and str(item.get('title')).strip().lower() != "none" and item.get('link') and item.get('providerPublishTime', 0) > 0:
@@ -255,7 +259,7 @@ if yfinance_ticker:
                                 st.markdown(f"**[{item.get('title')}]({item.get('link')})**  \n<small style='color:gray;'>{item.get('publisher')} | {pub_time}</small>\n---", unsafe_allow_html=True)
 
                 # ==========================================
-                # TAB 2: QUANT FUNDAMENTAL FACTORS
+                # TAB 2: ADVANCED QUANT FUNDAMENTAL FACTORS
                 # ==========================================
                 with tab2:
                     st.subheader("🧬 Multi-Factor Quality Matrix")
@@ -283,9 +287,9 @@ if yfinance_ticker:
                     public_share = max(0.0, 100.0 - (insider_share + inst_share))
                     
                     sh_col1, sh_col2, sh_col3 = st.columns(3)
-                    sh_col1.metric("Promoter / Insider", f"{insider_share:.2f}%" if insider_share > 0 else "N/A")
-                    sh_col2.metric("Institutional (FII/DII)", f"{inst_share:.2f}%" if inst_share > 0 else "N/A")
-                    sh_col3.metric("Public Float", f"{public_share:.2f}%" if public_share < 100 else "N/A")
+                    sh_col1.metric("Promoter / Insider Holding", f"{insider_share:.2f}%" if insider_share > 0 else "N/A")
+                    sh_col2.metric("Institutional Allocation (FII/DII)", f"{inst_share:.2f}%" if inst_share > 0 else "N/A")
+                    sh_col3.metric("Estimated Public Float", f"{public_share:.2f}%" if public_share < 100 else "N/A")
 
                 # ==========================================
                 # TAB 3: VOLATILITY & PIVOT TARGETS
@@ -309,10 +313,10 @@ if yfinance_ticker:
                         st.metric("📊 14-Day Average True Range (ATR)", f"₹{atr_val:.2f}")
 
                 # ==========================================
-                # TAB 4: INTRINSIC VALUATION MODELS
+                # TAB 4: INTRINSIC VALUATION MODELS (CRORES MODELLING)
                 # ==========================================
                 with tab4:
-                    st.subheader("💎 Valuation Models (Values in Crores)")
+                    st.subheader("💎 Valuation Models (Values Native in Crores)")
                     yf_pe = stock_info.get('trailingPE', 20.0)
                     yf_eps = stock_info.get('trailingEps', 25.0)
                     yf_bvps = stock_info.get('bookValue', 150.0)
@@ -344,7 +348,7 @@ if yfinance_ticker:
                             st.markdown(f"#### DCF Fair Value: **₹{dcf_val:,.2f}**")
 
                 # ==========================================
-                # OPTION 1 INTEGRATION: PEER COMPARISON ENGINE
+                # TAB 5: PEER COMPARISON ENGINE
                 # ==========================================
                 with tab5:
                     st.subheader("👥 Peer Comparison & Competitor Benchmarking")
@@ -374,7 +378,7 @@ if yfinance_ticker:
                         st.table(pd.DataFrame(peer_matrix))
 
                 # ==========================================
-                # OPTION 2 INTEGRATION: CORPORATE ACTIONS TRACKER
+                # TAB 6: CORPORATE ACTIONS TRACKER
                 # ==========================================
                 with tab6:
                     st.subheader("📅 Historical Corporate Actions Tracker")
@@ -388,7 +392,7 @@ if yfinance_ticker:
                         st.info("No recorded stock splits or major bonus corporate adjustments tracking on the API stream.")
 
                 # ==========================================
-                # OPTION 3 INTEGRATION: FUNDAMENTAL TREND VISUALIZER
+                # TAB 7: FUNDAMENTAL TREND VISUALIZER (FIXED!)
                 # ==========================================
                 with tab7:
                     st.subheader("📊 Macro Fundamental Trend Line Visualizer")
@@ -405,23 +409,25 @@ if yfinance_ticker:
                         trend_fig = go.Figure()
                         trend_fig.add_trace(go.Bar(x=years, y=rev_vals, name='Total Revenue (Cr)', marker_color='#007bff'))
                         trend_fig.add_trace(go.Bar(x=years, y=net_vals, name='Net Income (Cr)', marker_color='#28a745'))
-                        trend_fig.update_layout(bmode='group', height=400, yaxis_title="Value in ₹ Crores", margin=dict(t=20, b=20, l=0, r=0))
+                        
+                        # VALID PROPERTY FIX: Changed bmode='group' to barmode='group'
+                        trend_fig.update_layout(barmode='group', height=400, yaxis_title="Value in ₹ Crores", margin=dict(t=20, b=20, l=0, r=0))
                         st.plotly_chart(trend_fig, use_container_width=True)
                     else:
                         st.warning("Annual income statements are locked or unavailable on this specific asset structure.")
 
                 # ==========================================
-                # OPTION 4 INTEGRATION: MONTE CARLO RISK SIMULATOR
+                # TAB 8: MONTE CARLO PRICE PATH PROJECTION
                 # ==========================================
                 with tab8:
                     st.subheader("🎲 Quantitative Monte Carlo Price Path Projection")
-                    st.write("Simulating 1,000 algorithmic random walks over a forward 30-day horizon using historical annualized daily volatility coefficients.")
+                    st.write("Simulating 1,000 algorithmic random walks over a forward 30-day horizon using historical daily variance metrics.")
                     
                     daily_vol = df['Daily_Return'].std()
                     if pd.isna(daily_vol) or daily_vol == 0: daily_vol = 0.015
                     
                     num_days = 30
-                    num_sims = 150  # Balanced threshold array for instant mobile rendering speed
+                    num_sims = 150  # Balanced array for optimized mobile performance rendering
                     
                     sim_matrix = np.zeros((num_days, num_sims))
                     sim_matrix[0] = latest_close
@@ -444,24 +450,24 @@ if yfinance_ticker:
                     
                     st.markdown(f"""
                     ### 🎯 Quant Probability Distribution Targets (30 Days Forward)
-                    *   **10th Percentile Outlier Downside:** `₹{p10:,.2f}` (10% historical probability of crashing below this zone)
-                    *   **50th Percentile Central Expectation:** `₹{p50:,.2f}` (Median distribution threshold anchor)
-                    *   **90th Percentile Outlier Breakout:** `₹{p90:,.2f}` (10% quantitative momentum probability of surging past this zone)
+                    *   **10th Percentile Outlier Downside Risk:** `₹{p10:,.2f}` (10% structural risk path distribution drop)
+                    *   **50th Percentile Central Expectation Threshold:** `₹{p50:,.2f}` (Median mathematical path balance)
+                    *   **90th Percentile Outlier Breakout Velocity:** `₹{p90:,.2f}` (10% breakout confirmation target zone)
                     """)
 
                 # ==========================================
-                # TAB 9: STRATEGY BACKTESTER
+                # TAB 9: STRATEGY HISTORICAL BACKTESTER
                 # ==========================================
                 with tab9:
                     st.subheader("Historical Strategy Simulation Run")
                     b_col1, b_col2 = st.columns(2)
-                    with b_col1: strategy_choice = st.selectbox("Select Vector Line:", ["SMA Crossover (50 vs 200)", "MACD Line Crossover"])
-                    with b_col2: initial_capital = st.number_input("Starting Capital (₹)", value=100000)
+                    with b_col1: strategy_choice = st.selectbox("Select Core Vector:", ["SMA Crossover (50 vs 200)", "MACD Line Crossover"])
+                    with b_col2: initial_capital = st.number_input("Starting Capital Allocation (₹)", value=100000)
                     
                     bt_df = df.dropna(subset=['SMA_200']).copy() if strategy_choice == "SMA Crossover (50 vs 200)" else df.dropna(subset=['Signal_Line']).copy()
                     
                     if bt_df.empty:
-                        st.error("Insufficient timeline breadth available to backtest.")
+                        st.error("Insufficient timeline breadth available to backtest indicators.")
                     else:
                         pos, cash, sh, hist = 0, initial_capital, 0, []
                         for date, row in bt_df.iterrows():
@@ -477,9 +483,9 @@ if yfinance_ticker:
                         
                         st.metric("Strategy Terminal Worth", f"₹{bt_df['Strat'].iloc[-1]:,.2f}")
                         eq_fig = go.Figure()
-                        eq_fig.add_trace(go.Scatter(x=bt_df.index, y=bt_df['Strat'], line=dict(color='green'), name='Strategy'))
-                        eq_fig.add_trace(go.Scatter(x=bt_df.index, y=bt_df['BH'], line=dict(color='grey', dash='dash'), name='Buy & Hold'))
+                        eq_fig.add_trace(go.Scatter(x=bt_df.index, y=bt_df['Strat'], line=dict(color='green'), name='Strategy Curves'))
+                        eq_fig.add_trace(go.Scatter(x=bt_df.index, y=bt_df['BH'], line=dict(color='grey', dash='dash'), name='Benchmark Curves'))
                         st.plotly_chart(eq_fig, use_container_width=True)
 
         except Exception as e:
-            st.error(f"Global runtime error compiling analytics frames: {e}")
+            st.error(f"Global execution framework runtime error: {e}")
