@@ -7,10 +7,28 @@ import requests
 from datetime import datetime
 
 # ==========================================
-# 1. PAGE CONFIGURATION & THEME SETUP
+# 1. PAGE CONFIGURATION & MOBILE FREEZE STYLING
 # ==========================================
 st.set_page_config(page_title="Indian Quant Deep-Dive Dashboard", layout="wide")
 st.title("📊 Indian Quant Trading & Deep-Dive Dashboard")
+
+# Global CSS Injection to Freeze Table Headers and Optimize Mobile Elements
+st.markdown("""
+<style>
+    /* Freeze table headers dynamically during scrolling */
+    th {
+        position: -webkit-sticky;
+        position: sticky;
+        top: 0;
+        background-color: #f8f9fa !important;
+        z-index: 5;
+    }
+    /* Ensure markdown tables render cleanly on mobile viewports */
+    div[data-testid="stTable"] {
+        overflow-x: auto;
+    }
+</style>
+""", unsafe_allow_html=True)
 
 # ==========================================
 # 2. MOBILE-FIRST TOP-LEVEL NAVIGATION & SEARCH
@@ -29,7 +47,7 @@ if not raw_ticker_input.startswith('^') and '.' not in raw_ticker_input:
 else:
     yfinance_ticker = raw_ticker_input
 
-# Move layout configurations to sidebar to keep screen clean
+# Sidebar settings
 st.sidebar.header("Chart Settings")
 show_bollinger = st.sidebar.checkbox("Show Bollinger Bands", value=True)
 show_fib = st.sidebar.checkbox("Show Fibonacci Levels", value=False)
@@ -133,7 +151,7 @@ def calculate_indicators(df):
     df['BB_Upper'] = df['BB_Mid'] + (2 * df['BB_Std'])
     df['BB_Lower'] = df['BB_Mid'] - (2 * df['BB_Std'])
     
-    # Average True Range (ATR) for Advanced Volatility Tool
+    # Average True Range (ATR)
     high_low = df['High'] - df['Low']
     high_cp = np.abs(df['High'] - df['Close'].shift())
     low_cp = np.abs(df['Low'] - df['Close'].shift())
@@ -146,7 +164,7 @@ def calculate_indicators(df):
 # 4. RUN SYSTEM CALCULATIONS & TABS
 # ==========================================
 if yfinance_ticker:
-    with st.spinner("Compiling cross-asset indicators and loading news feeds..."):
+    with st.spinner("Compiling cross-asset indicators and loading data feeds..."):
         try:
             raw_df, stock_info, stock_news = load_data(yfinance_ticker, "5y")
             
@@ -170,6 +188,16 @@ if yfinance_ticker:
                 price_change = latest_close - prev_close
                 pct_change = (price_change / prev_close) * 100 if prev_close != 0 else 0
                 
+                # Sanitize and Filter News Stream up front
+                clean_news_stream = []
+                for item in stock_news:
+                    n_title = item.get('title')
+                    n_link = item.get('link')
+                    n_time = item.get('providerPublishTime', 0)
+                    # Exclude fields containing literal strings of 'None', empty targets, or zero dates
+                    if n_title and str(n_title).strip().lower() != "none" and n_link and n_time > 0:
+                        clean_news_stream.append(item)
+
                 # ==========================================
                 # TAB 1: TECHNICAL RADAR & NEWS FEEDS
                 # ==========================================
@@ -206,7 +234,6 @@ if yfinance_ticker:
                         score -= 1.5
                         reasons.append(f"🔴 **Exhaustion (RSI):** Overbought Condition ({latest_rsi:.1f})")
 
-                    # Formulate Investment Verdict banner
                     if score >= 2:
                         verdict, bg_color, text_color = "HIGH CONVICTION BUY", "#d4edda", "#155724"
                     elif 0.5 <= score < 2:
@@ -229,7 +256,12 @@ if yfinance_ticker:
                     col4.metric("Signal Matrix Weight", f"{score:+.1f}")
 
                     st.markdown("---")
-                    chart_col, sidebar_news_col = st.columns([3, 1.2])
+                    
+                    # Dynamically adjust layout columns depending on news data validity
+                    if clean_news_stream:
+                        chart_col, sidebar_news_col = st.columns([3, 1.2])
+                    else:
+                        chart_col = st.container()
                     
                     with chart_col:
                         chart_df = df[-252:] if len(df) > 252 else df
@@ -245,27 +277,24 @@ if yfinance_ticker:
                         fig.update_layout(xaxis_rangeslider_visible=False, height=400, margin=dict(l=0, r=0, t=10, b=10))
                         st.plotly_chart(fig, use_container_width=True)
 
-                    with sidebar_news_col:
-                        st.subheader("📰 Real-time News Stream")
-                        if stock_news:
-                            for item in stock_news[:5]:
-                                pub_time = datetime.fromtimestamp(item.get('providerPublishTime', 0)).strftime('%d %b %Y')
+                    if clean_news_stream:
+                        with sidebar_news_col:
+                            st.subheader("📰 Real-time News Stream")
+                            for item in clean_news_stream[:5]:
+                                pub_time = datetime.fromtimestamp(item.get('providerPublishTime')).strftime('%d %b %Y')
                                 st.markdown(f"""
                                 **[{item.get('title')}]({item.get('link')})**  
-                                <small style='color:gray;'>Publisher: {item.get('publisher')} | {pub_time}</small>
+                                <small style='color:gray;'>Publisher: {item.get('publisher', 'Financial Feed')} | {pub_time}</small>
                                 ---
                                 """, unsafe_allow_html=True)
-                        else:
-                            st.info("No active specific market headlines found for this asset index.")
 
                 # ==========================================
-                # TAB 2: ADVANCED QUANT FUNDAMENTAL FACTORS (NEW ADVANCED TOOL)
+                # TAB 2: ADVANCED QUANT FUNDAMENTAL FACTORS & SHAREHOLDING
                 # ==========================================
                 with tab2:
-                    st.subheader("🧬 Multi-Factor Fundamental Quality Matrix")
-                    st.write("Deep corporate accounting factors retrieved live from core balance sheets via Yahoo Engine.")
+                    st.subheader("🧬 Multi-Factor Quality Matrix")
                     
-                    # Extract variables safely
+                    # Core accounting variables
                     roe = stock_info.get('returnOnEquity')
                     roa = stock_info.get('returnOnAssets')
                     debt_to_equity = stock_info.get('debtToEquity')
@@ -277,7 +306,6 @@ if yfinance_ticker:
                     def fmt_pct(val): return f"{val * 100:.2f}%" if val is not None else "Data Missing"
                     def fmt_num(val, mult=1): return f"{val/mult:.2f}" if val is not None else "Data Missing"
 
-                    # Build Scannable Factor Evaluation Table Matrix
                     factor_data = {
                         "Quant Performance Factor": ["Return on Equity (ROE)", "Return on Assets (ROA)", "Operating Profit Margin", "Debt-to-Equity Ratio", "Current Solvency Ratio", "Systematic Asset Volatility (Beta)", "PEG Valuation Expansion Multiple"],
                         "Current Asset Reading": [fmt_pct(roe), fmt_pct(roa), fmt_pct(operating_margin), fmt_num(debt_to_equity, 100), fmt_num(current_ratio), fmt_num(beta_val), fmt_num(peg_ratio)],
@@ -285,28 +313,23 @@ if yfinance_ticker:
                     }
                     st.table(pd.DataFrame(factor_data))
                     
-                    # Core Health Diagnostics Warning Cards
-                    st.markdown("### 🔍 Risk Allocation Signals")
-                    c1, c2 = st.columns(2)
-                    with c1:
-                        if debt_to_equity and debt_to_equity > 100:
-                            st.warning("⚠️ **Leverage Alert:** Corporate Debt-to-Equity exceeds 1.0. Balance sheet is heavily leveraged.")
-                        else:
-                            st.success("✅ **Balance Sheet Health:** Long-term liability metrics are securely structured.")
-                    with c2:
-                        if roe and roe > 0.15:
-                            st.success("✅ **Profit Machine Engine:** Return on Equity meets tier-1 institution targets (>15%).")
-                        else:
-                            st.info("ℹ️ **Capital Efficiency Warning:** Asset yields moderate capital velocity returns on investor equity.")
+                    # --- EXTRACTION OF SHAREHOLDING PATTERN METRICS ---
+                    st.markdown("### 🏢 Core Shareholding Structure")
+                    insider_share = stock_info.get('heldPercentInsiders', 0.0) * 100
+                    inst_share = stock_info.get('heldPercentInstitutions', 0.0) * 100
+                    public_share = max(0.0, 100.0 - (insider_share + inst_share))
+                    
+                    sh_col1, sh_col2, sh_col3 = st.columns(3)
+                    sh_col1.metric("Promoter / Insider Holding", f"{insider_share:.2f}%" if insider_share > 0 else "N/A")
+                    sh_col2.metric("Institutional Allocation (FII/DII)", f"{inst_share:.2f}%" if inst_share > 0 else "N/A")
+                    sh_col3.metric("Estimated Public Float", f"{public_share:.2f}%" if public_share < 100 else "N/A")
 
                 # ==========================================
-                # TAB 3: VOLATILITY & PIVOT TARGETS (NEW ADVANCED TOOL)
+                # TAB 3: VOLATILITY & PIVOT TARGETS
                 # ==========================================
                 with tab3:
                     st.subheader("📐 Intraday Pivot Target Framework & Volatility Ranges")
-                    st.write("Mathematical execution targets calculated using previous complete close distributions.")
 
-                    # Calculate Pivot Points from last historical trading metrics row
                     last_day = df.iloc[-1]
                     h_val = last_day['High']
                     l_val = last_day['Low']
@@ -341,7 +364,7 @@ if yfinance_ticker:
                         st.metric("📊 14-Day True Average Volatility Range (ATR)", f"₹{atr_val:.2f}")
 
                 # ==========================================
-                # TAB 4: INTRINSIC & FAIR VALUE CALCULATORS
+                # TAB 4: INTRINSIC VALUATION MODELS (CRORES CONFIGURATION)
                 # ==========================================
                 with tab4:
                     st.subheader("💎 Valuation Models & Intrinsic Calculations")
@@ -350,10 +373,11 @@ if yfinance_ticker:
                     yf_eps = stock_info.get('trailingEps', 25.0)
                     yf_bvps = stock_info.get('bookValue', 150.0)
                     yf_mcap = stock_info.get('marketCap', latest_close * 1000000)
-                    yf_fcf = stock_info.get('freeCashflow', yf_mcap * 0.05)
-                    yf_shares = stock_info.get('sharesOutstanding', yf_mcap / latest_close)
+                    
+                    # Convert to Crores units safely (Value divided by 10^7)
+                    yf_fcf_crores = stock_info.get('freeCashflow', yf_mcap * 0.05) / 10000000
+                    yf_shares_crores = stock_info.get('sharesOutstanding', yf_mcap / latest_close) / 10000000
 
-                    # Dynamic protection fallbacks if fields are parsed empty from Yahoo core dictionary
                     if not yf_eps and yf_pe > 0: yf_eps = latest_close / yf_pe
                     if not yf_pe and yf_eps > 0: yf_pe = latest_close / yf_eps
 
@@ -384,8 +408,10 @@ if yfinance_ticker:
 
                     with calc_col2:
                         st.markdown("### 🌀 Discounted Cash Flow (DCF) Model")
-                        fcf_input = st.number_input("Free Cash Flow (FCF in ₹)", value=float(yf_fcf))
-                        shares_input = st.number_input("Shares Outstanding", value=float(yf_shares))
+                        
+                        # Interactive user variables displayed cleanly in Crores unit standards
+                        fcf_input = st.number_input("Free Cash Flow (FCF in ₹ Crores)", value=float(yf_fcf_crores), format="%.2f")
+                        shares_input = st.number_input("Shares Outstanding (in Crores)", value=float(yf_shares_crores), format="%.2f")
                         
                         g_rate = st.slider("Expected Growth Rate (g) (%)", min_value=-5.0, max_value=40.0, value=12.0, step=0.5)
                         d_rate = st.slider("Discount Rate (r) (%)", min_value=5.0, max_value=25.0, value=11.0, step=0.5)
@@ -406,6 +432,7 @@ if yfinance_ticker:
                             terminal_value = (temp_fcf * (1 + (t_rate / 100))) / ((d_rate - t_rate) / 100)
                             pv_terminal_value = terminal_value / ((1 + (d_rate / 100)) ** 5)
                             
+                            # Crores of FCF divided by Crores of Shares calculates target equity pricing accurately
                             dcf_fair_value = (sum_pv_fcf + pv_terminal_value) / shares_input
                             dcf_mos = ((dcf_fair_value - latest_close) / dcf_fair_value) * 100
                             
