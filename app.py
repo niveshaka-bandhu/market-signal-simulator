@@ -31,25 +31,29 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 # ==========================================
-# 2. MOBILE-FIRST TOP-LEVEL NAVIGATION & SEARCH
+# 2. NAVIGATION SIDEBAR CONTROLLER
 # ==========================================
-st.markdown("---")
-col_search, col_blank = st.columns([2, 2])
-with col_search:
-    raw_ticker_input = st.text_input(
-        "🔍 Search Indian Ticker (e.g., RELIANCE, TCS, INFY, HDFCBANK, ^NSEI):", 
-        "RELIANCE"
-    ).upper().strip()
+st.sidebar.header("🎯 Dashboard Workspace")
+dashboard_view = st.sidebar.radio(
+    "Select Page View:",
+    ["📈 Market View & Core Metrics", "🧬 Quantitative Deep-Dive"]
+)
+
+st.sidebar.markdown("---")
+st.sidebar.header("Chart Settings")
+show_bollinger = st.sidebar.checkbox("Show Bollinger Bands", value=True)
+
+# Ticker Input in Sidebar for universal page context access
+raw_ticker_input = st.sidebar.text_input(
+    "🔍 Search Indian Ticker (e.g., RELIANCE, TCS, INFY):", 
+    "RELIANCE"
+).upper().strip()
 
 # Exchange Suffixing Logic
 if not raw_ticker_input.startswith('^') and '.' not in raw_ticker_input:
     yfinance_ticker = f"{raw_ticker_input}.NS"
 else:
     yfinance_ticker = raw_ticker_input
-
-st.sidebar.header("Chart Settings")
-show_bollinger = st.sidebar.checkbox("Show Bollinger Bands", value=True)
-show_fib = st.sidebar.checkbox("Show Fibonacci Levels", value=False)
 
 # ==========================================
 # 3. ROBUST DATA FETCHING PIPELINE
@@ -124,7 +128,6 @@ def load_data(ticker, period="5y"):
 
 @st.cache_data(ttl=3600)
 def load_extended_quant_data(ticker):
-    """Pulls corporate financials and historical corporate actions."""
     try:
         t = yf.Ticker(ticker)
         actions = t.actions
@@ -171,10 +174,10 @@ def robust_find_row(df, keyword):
     return None
 
 # ==========================================
-# 4. RUN CALCULATIONS & MAIN INTERFACE
+# 4. DATA COMPILATION RUNNER
 # ==========================================
 if yfinance_ticker:
-    with st.spinner("Compiling structural quant analytics frameworks..."):
+    with st.spinner("Processing core parameters and aligning metrics..."):
         try:
             raw_df, stock_info, stock_news = load_data(yfinance_ticker, "5y")
             extended_actions, extended_financials = load_extended_quant_data(yfinance_ticker)
@@ -184,33 +187,22 @@ if yfinance_ticker:
             else:
                 df = calculate_indicators(raw_df)
                 
-                # Master 9-Tab Dashboard Framework
-                tab1, tab2, tab3, tab4, tab5, tab6, tab7, tab8, tab9 = st.tabs([
-                    "🔍 Technical Radar", 
-                    "🧬 Advanced Quant Factors",
-                    "📐 Volatility & Pivot Target Levels",
-                    "💎 Valuation Models",
-                    "👥 Peer Comparison Matrix",
-                    "📅 Corporate Actions Tracker",
-                    "📊 Fundamental Trends",
-                    "🎲 Monte Carlo Risk Simulator",
-                    "🕒 Engine Backtester"
-                ])
-                
                 latest_close = df['Close'].iloc[-1]
                 price_change = latest_close - df['Close'].iloc[-2]
                 pct_change = (price_change / df['Close'].iloc[-2]) * 100
                 
-                # Bulletproof News Stream Filter
                 clean_news_stream = []
                 for item in stock_news:
                     if item.get('title') and str(item.get('title')).strip().lower() != "none" and item.get('link') and item.get('providerPublishTime', 0) > 0:
                         clean_news_stream.append(item)
 
                 # ==========================================
-                # TAB 1: TECHNICAL RADAR & HEADLINES
+                # VIEW 1: MARKET VIEW & CORE METRICS PAGE
                 # ==========================================
-                with tab1:
+                if dashboard_view == "📈 Market View & Core Metrics":
+                    st.header(f"📈 Core Metrics Workspace ({raw_ticker_input})")
+                    
+                    # Strategy Verdict Processing
                     latest_rsi = df['RSI'].iloc[-1] if not pd.isna(df['RSI'].iloc[-1]) else 50.0
                     latest_sma50 = df['SMA_50'].iloc[-1]
                     latest_sma200 = df['SMA_200'].iloc[-1]
@@ -230,16 +222,19 @@ if yfinance_ticker:
 
                     st.markdown(f'<div style="background-color:{bg_color}; padding:15px; border-radius:8px; border-left:6px solid {text_color}; margin-bottom:15px;"><h4 style="margin:0; color:{text_color}; font-weight:bold;">STRATEGY VERDICT: {verdict} (Score: {score:+.1f})</h4></div>', unsafe_allow_html=True)
 
-                    col1, col2, col3, col4 = st.columns(4)
-                    col1.metric("Current Value", f"₹{latest_close:,.2f}", f"{price_change:+.2f} ({pct_change:+.2f}%)")
-                    col2.metric("Relative Strength Index", f"{latest_rsi:.1f}")
-                    col3.metric("MACD Divergence", f"{df['MACD_Hist'].iloc[-1]:.2f}")
-                    col4.metric("Signal Weight", f"{score:+.1f}")
+                    m1, m2, m3, m4 = st.columns(4)
+                    m1.metric("Current Value", f"₹{latest_close:,.2f}", f"{price_change:+.2f} ({pct_change:+.2f}%)")
+                    m2.metric("Relative Strength Index", f"{latest_rsi:.1f}")
+                    m3.metric("MACD Divergence", f"{df['MACD_Hist'].iloc[-1]:.2f}")
+                    m4.metric("Signal Weight", f"{score:+.1f}")
 
                     st.markdown("---")
+                    
+                    # Organized Layout Components
                     chart_col, sidebar_news_col = st.columns([3, 1.2]) if clean_news_stream else (st.container(), None)
                     
                     with chart_col:
+                        st.subheader("📊 Price Action Engine")
                         chart_df = df[-252:]
                         fig = go.Figure()
                         fig.add_trace(go.Candlestick(x=chart_df.index, open=chart_df['Open'], high=chart_df['High'], low=chart_df['Low'], close=chart_df['Close'], name='Price'))
@@ -258,234 +253,215 @@ if yfinance_ticker:
                                 pub_time = datetime.fromtimestamp(item.get('providerPublishTime')).strftime('%d %b %Y')
                                 st.markdown(f"**[{item.get('title')}]({item.get('link')})**  \n<small style='color:gray;'>{item.get('publisher')} | {pub_time}</small>\n---", unsafe_allow_html=True)
 
-                # ==========================================
-                # TAB 2: ADVANCED QUANT FUNDAMENTAL FACTORS
-                # ==========================================
-                with tab2:
-                    st.subheader("🧬 Multi-Factor Quality Matrix")
-                    roe = stock_info.get('returnOnEquity')
-                    roa = stock_info.get('returnOnAssets')
-                    debt_to_equity = stock_info.get('debtToEquity')
-                    current_ratio = stock_info.get('currentRatio')
-                    operating_margin = stock_info.get('operatingMargins')
-                    beta_val = stock_info.get('beta')
-                    peg_ratio = stock_info.get('pegRatio')
+                    st.markdown("---")
+                    core_tab1, core_tab2 = st.tabs(["📐 Intraday Pivot Target Framework", "💎 Intrinsic Valuation Models"])
                     
-                    def fmt_pct(val): return f"{val * 100:.2f}%" if val is not None else "N/A"
-                    def fmt_num(val, mult=1): return f"{val/mult:.2f}" if val is not None else "N/A"
-
-                    factor_data = {
-                        "Quant Performance Factor": ["Return on Equity (ROE)", "Return on Assets (ROA)", "Operating Profit Margin", "Debt-to-Equity Ratio", "Current Solvency Ratio", "Systematic Volatility (Beta)", "PEG Multiple"],
-                        "Current Reading": [fmt_pct(roe), fmt_pct(roa), fmt_pct(operating_margin), fmt_num(debt_to_equity, 100), fmt_num(current_ratio), fmt_num(beta_val), fmt_num(peg_ratio)],
-                        "Target Threshold": ["> 15.00% Optimal", "> 8.00% Optimal", "> 12.00% High Efficiency", "< 1.00 Low Leverage", "> 1.20 Cash Soundness", "< 1.00 Defensive", "< 1.50 Value Growth"]
-                    }
-                    st.table(pd.DataFrame(factor_data))
-                    
-                    st.markdown("### 🏢 Core Shareholding Structure")
-                    insider_share = stock_info.get('heldPercentInsiders', 0.0) * 100
-                    inst_share = stock_info.get('heldPercentInstitutions', 0.0) * 100
-                    public_share = max(0.0, 100.0 - (insider_share + inst_share))
-                    
-                    sh_col1, sh_col2, sh_col3 = st.columns(3)
-                    sh_col1.metric("Promoter / Insider Holding", f"{insider_share:.2f}%" if insider_share > 0 else "N/A")
-                    sh_col2.metric("Institutional Allocation (FII/DII)", f"{inst_share:.2f}%" if inst_share > 0 else "N/A")
-                    sh_col3.metric("Estimated Public Float", f"{public_share:.2f}%" if public_share < 100 else "N/A")
-
-                # ==========================================
-                # TAB 3: VOLATILITY & PIVOT TARGETS
-                # ==========================================
-                with tab3:
-                    st.subheader("📐 Intraday Pivot Target Framework")
-                    last_day = df.iloc[-1]
-                    h_val, l_val, c_val = last_day['High'], last_day['Low'], last_day['Close']
-                    atr_val = last_day['ATR'] if 'ATR' in df.columns else (h_val - l_val)
-                    
-                    pivot = (h_val + l_val + c_val) / 3.0
-                    r1, s1 = (2 * pivot) - l_val, (2 * pivot) - h_val
-                    r2, s2 = pivot + (h_val - l_val), pivot - (h_val - l_val)
-
-                    p_col1, p_col2 = st.columns(2)
-                    with p_col1:
-                        st.markdown(f"> **Resistance 2:** `₹{r2:,.2f}`  \n> **Resistance 1:** `₹{r1:,.2f}`")
-                        st.metric("🎯 Central Structural Pivot", f"₹{pivot:,.2f}")
-                    with p_col2:
-                        st.markdown(f"> **Support 1:** `₹{s1:,.2f}`  \n> **Support 2:** `₹{s2:,.2f}`")
-                        st.metric("📊 14-Day Average True Range (ATR)", f"₹{atr_val:.2f}")
-
-                # ==========================================
-                # TAB 4: INTRINSIC VALUATION MODELS (CRORES MODELLING)
-                # ==========================================
-                with tab4:
-                    st.subheader("💎 Valuation Models (Values Native in Crores)")
-                    yf_pe = stock_info.get('trailingPE', 20.0)
-                    yf_eps = stock_info.get('trailingEps', 25.0)
-                    yf_bvps = stock_info.get('bookValue', 150.0)
-                    yf_mcap = stock_info.get('marketCap', latest_close * 1000000)
-                    
-                    yf_fcf_crores = stock_info.get('freeCashflow', yf_mcap * 0.05) / 10000000
-                    yf_shares_crores = stock_info.get('sharesOutstanding', yf_mcap / latest_close) / 10000000
-
-                    calc_col1, calc_col2 = st.columns(2)
-                    with calc_col1:
-                        st.markdown("### 🏛️ Graham Model")
-                        eps_input = st.number_input("EPS", value=float(yf_eps), format="%.2f", key="val_eps")
-                        bvps_input = st.number_input("BVPS", value=float(yf_bvps), format="%.2f", key="val_bvps")
-                        if eps_input > 0 and bvps_input > 0:
-                            g_val = np.sqrt(22.5 * eps_input * bvps_input)
-                            st.markdown(f"#### Graham Fair Value: **₹{g_val:,.2f}**")
-
-                    with calc_col2:
-                        st.markdown("### 🌀 DCF Model")
-                        fcf_input = st.number_input("FCF (₹ Crores)", value=float(yf_fcf_crores), format="%.2f", key="val_fcf")
-                        shares_input = st.number_input("Shares Out (Crores)", value=float(yf_shares_crores), format="%.2f", key="val_sh")
-                        g_rate = st.slider("Growth Rate (%)", -5.0, 40.0, 12.0, 0.5, key="val_g")
-                        d_rate = st.slider("Discount Rate (%)", 5.0, 25.0, 11.0, 0.5, key="val_d")
+                    with core_tab1:
+                        last_day = df.iloc[-1]
+                        h_val, l_val, c_val = last_day['High'], last_day['Low'], last_day['Close']
+                        atr_val = last_day['ATR'] if 'ATR' in df.columns else (h_val - l_val)
                         
-                        if d_rate > 4.5:
-                            p_v = [fcf_input * ((1 + (g_rate / 100)) ** i) / ((1 + (d_rate / 100)) ** i) for i in range(1, 6)]
-                            term_val = (p_v[-1] * 1.045) / ((d_rate - 4.5) / 100)
-                            dcf_val = (sum(p_v) + (term_val / ((1 + (d_rate / 100)) ** 5))) / shares_input
-                            st.markdown(f"#### DCF Fair Value: **₹{dcf_val:,.2f}**")
+                        pivot = (h_val + l_val + c_val) / 3.0
+                        r1, s1 = (2 * pivot) - l_val, (2 * pivot) - h_val
+                        r2, s2 = pivot + (h_val - l_val), pivot - (h_val - l_val)
 
-                # ==========================================
-                # TAB 5: PEER COMPARISON ENGINE
-                # ==========================================
-                with tab5:
-                    st.subheader("👥 Peer Comparison & Competitor Benchmarking")
-                    default_peers = "INFY, WIPRO, HCLTECH" if "TCS" in yfinance_ticker else "RELIANCE.NS, ONGC.NS, BPCL.NS"
-                    peer_input = st.text_input("Enter Competitor Suffix Symbols (Comma Separated):", default_peers)
-                    
-                    peer_symbols = [p.strip().upper() for p in peer_input.split(",") if p.strip()]
-                    if yfinance_ticker not in peer_symbols:
-                        peer_symbols.insert(0, yfinance_ticker)
-                        
-                    peer_matrix = []
-                    for symbol in peer_symbols:
-                        sym_clean = f"{symbol}.NS" if not symbol.endswith(".NS") and not symbol.startswith("^") else symbol
-                        try:
-                            p_info = yf.Ticker(sym_clean).info
-                            peer_matrix.append({
-                                "Ticker": symbol,
-                                "Price (₹)": f"₹{p_info.get('currentPrice', p_info.get('regularPrice', 0)):,.2f}",
-                                "P/E Multiple": round(p_info.get('trailingPE', 0), 2) or "N/A",
-                                "P/B Ratio": round(p_info.get('priceToBook', 0), 2) or "N/A",
-                                "ROE (%)": f"{p_info.get('returnOnEquity', 0)*100:.2f}%",
-                                "Op. Margin (%)": f"{p_info.get('operatingMargins', 0)*100:.2f}%"
-                            })
-                        except Exception:
-                            continue
-                    if peer_matrix:
-                        st.table(pd.DataFrame(peer_matrix))
+                        p_col1, p_col2 = st.columns(2)
+                        with p_col1:
+                            st.markdown(f"> **Resistance 2:** `₹{r2:,.2f}`  \n> **Resistance 1:** `₹{r1:,.2f}`")
+                            st.metric("🎯 Central Structural Pivot", f"₹{pivot:,.2f}")
+                        with p_col2:
+                            st.markdown(f"> **Support 1:** `₹{s1:,.2f}`  \n> **Support 2:** `₹{s2:,.2f}`")
+                            st.metric("📊 14-Day Average True Range (ATR)", f"₹{atr_val:.2f}")
 
-                # ==========================================
-                # TAB 6: CORPORATE ACTIONS TRACKER
-                # ==========================================
-                with tab6:
-                    st.subheader("📅 Historical Corporate Actions Tracker")
-                    st.write("Review historical stock splits, stock bonuses, and capital adjustments recorded by exchange filings.")
-                    
-                    if not extended_actions.empty:
-                        clean_actions = extended_actions.copy()
-                        clean_actions.index = pd.to_datetime(clean_actions.index).strftime('%d %b %Y')
-                        st.dataframe(clean_actions.sort_index(ascending=False), use_container_width=True)
-                    else:
-                        st.info("No recorded stock splits or major bonus corporate adjustments tracking on the API stream.")
+                    with core_tab2:
+                        yf_pe = stock_info.get('trailingPE', 20.0)
+                        yf_eps = stock_info.get('trailingEps', 25.0)
+                        yf_bvps = stock_info.get('bookValue', 150.0)
+                        yf_mcap = stock_info.get('marketCap', latest_close * 1000000)
+                        
+                        yf_fcf_crores = stock_info.get('freeCashflow', yf_mcap * 0.05) / 10000000
+                        yf_shares_crores = stock_info.get('sharesOutstanding', yf_mcap / latest_close) / 10000000
 
-                # ==========================================
-                # TAB 7: FUNDAMENTAL TREND VISUALIZER (FIXED!)
-                # ==========================================
-                with tab7:
-                    st.subheader("📊 Macro Fundamental Trend Line Visualizer")
-                    st.write("Top-line operational revenues vs. Net baseline corporate margins scaled into Crores.")
-                    
-                    rev_row = robust_find_row(extended_financials, "TotalRevenue")
-                    net_row = robust_find_row(extended_financials, "NetIncome")
-                    
-                    if rev_row is not None and net_row is not None:
-                        years = [pd.to_datetime(c).strftime('%Y') for c in extended_financials.columns]
-                        rev_vals = [float(v) / 10000000 for v in rev_row.values]
-                        net_vals = [float(v) / 10000000 for v in net_row.values]
-                        
-                        trend_fig = go.Figure()
-                        trend_fig.add_trace(go.Bar(x=years, y=rev_vals, name='Total Revenue (Cr)', marker_color='#007bff'))
-                        trend_fig.add_trace(go.Bar(x=years, y=net_vals, name='Net Income (Cr)', marker_color='#28a745'))
-                        
-                        # VALID PROPERTY FIX: Changed bmode='group' to barmode='group'
-                        trend_fig.update_layout(barmode='group', height=400, yaxis_title="Value in ₹ Crores", margin=dict(t=20, b=20, l=0, r=0))
-                        st.plotly_chart(trend_fig, use_container_width=True)
-                    else:
-                        st.warning("Annual income statements are locked or unavailable on this specific asset structure.")
+                        calc_col1, calc_col2 = st.columns(2)
+                        with calc_col1:
+                            st.markdown("#### 🏛️ Graham Model")
+                            eps_input = st.number_input("EPS", value=float(yf_eps), format="%.2f", key="core_eps")
+                            bvps_input = st.number_input("BVPS", value=float(yf_bvps), format="%.2f", key="core_bvps")
+                            if eps_input > 0 and bvps_input > 0:
+                                g_val = np.sqrt(22.5 * eps_input * bvps_input)
+                                st.markdown(f"Calculated Graham Value: **₹{g_val:,.2f}**")
 
-                # ==========================================
-                # TAB 8: MONTE CARLO PRICE PATH PROJECTION
-                # ==========================================
-                with tab8:
-                    st.subheader("🎲 Quantitative Monte Carlo Price Path Projection")
-                    st.write("Simulating 1,000 algorithmic random walks over a forward 30-day horizon using historical daily variance metrics.")
-                    
-                    daily_vol = df['Daily_Return'].std()
-                    if pd.isna(daily_vol) or daily_vol == 0: daily_vol = 0.015
-                    
-                    num_days = 30
-                    num_sims = 150  # Balanced array for optimized mobile performance rendering
-                    
-                    sim_matrix = np.zeros((num_days, num_sims))
-                    sim_matrix[0] = latest_close
-                    
-                    for d in range(1, num_days):
-                        random_shocks = np.random.normal(0, daily_vol, num_sims)
-                        sim_matrix[d] = sim_matrix[d-1] * np.exp(random_shocks)
-                        
-                    mc_fig = go.Figure()
-                    for sim in range(num_sims):
-                        mc_fig.add_trace(go.Scatter(y=sim_matrix[:, sim], mode='lines', line=dict(width=0.5), opacity=0.3, showlegend=False))
-                        
-                    mc_fig.update_layout(height=400, xaxis_title="Trading Days Forward", yaxis_title="Target Share Price (₹)", margin=dict(t=10, b=10, l=0, r=0))
-                    st.plotly_chart(mc_fig, use_container_width=True)
-                    
-                    final_day_distribution = sim_matrix[-1, :]
-                    p10 = np.percentile(final_day_distribution, 10)
-                    p50 = np.percentile(final_day_distribution, 50)
-                    p90 = np.percentile(final_day_distribution, 90)
-                    
-                    st.markdown(f"""
-                    ### 🎯 Quant Probability Distribution Targets (30 Days Forward)
-                    *   **10th Percentile Outlier Downside Risk:** `₹{p10:,.2f}` (10% structural risk path distribution drop)
-                    *   **50th Percentile Central Expectation Threshold:** `₹{p50:,.2f}` (Median mathematical path balance)
-                    *   **90th Percentile Outlier Breakout Velocity:** `₹{p90:,.2f}` (10% breakout confirmation target zone)
-                    """)
-
-                # ==========================================
-                # TAB 9: STRATEGY HISTORICAL BACKTESTER
-                # ==========================================
-                with tab9:
-                    st.subheader("Historical Strategy Simulation Run")
-                    b_col1, b_col2 = st.columns(2)
-                    with b_col1: strategy_choice = st.selectbox("Select Core Vector:", ["SMA Crossover (50 vs 200)", "MACD Line Crossover"])
-                    with b_col2: initial_capital = st.number_input("Starting Capital Allocation (₹)", value=100000)
-                    
-                    bt_df = df.dropna(subset=['SMA_200']).copy() if strategy_choice == "SMA Crossover (50 vs 200)" else df.dropna(subset=['Signal_Line']).copy()
-                    
-                    if bt_df.empty:
-                        st.error("Insufficient timeline breadth available to backtest indicators.")
-                    else:
-                        pos, cash, sh, hist = 0, initial_capital, 0, []
-                        for date, row in bt_df.iterrows():
-                            buy = row['SMA_50'] > row['SMA_200'] if strategy_choice == "SMA Crossover (50 vs 200)" else row['MACD'] > row['Signal_Line']
-                            if pos == 0 and buy:
-                                sh, cash, pos = cash / row['Close'], 0, 1
-                            elif pos == 1 and not buy:
-                                cash, sh, pos = sh * row['Close'], 0, 0
-                            hist.append(cash + (sh * row['Close']))
+                        with calc_col2:
+                            st.markdown("#### 🌀 DCF Model (Calibrated in Crores)")
+                            fcf_input = st.number_input("FCF (₹ Crores)", value=float(yf_fcf_crores), format="%.2f", key="core_fcf")
+                            shares_input = st.number_input("Shares Out (Crores)", value=float(yf_shares_crores), format="%.2f", key="core_sh")
+                            g_rate = st.slider("Growth Rate (%)", -5.0, 40.0, 12.0, 0.5, key="core_g")
+                            d_rate = st.slider("Discount Rate (%)", 5.0, 25.0, 11.0, 0.5, key="core_d")
                             
-                        bt_df['Strat'] = hist
-                        bt_df['BH'] = (initial_capital / bt_df['Close'].iloc[0]) * bt_df['Close']
+                            if d_rate > 4.5:
+                                p_v = [fcf_input * ((1 + (g_rate / 100)) ** i) / ((1 + (d_rate / 100)) ** i) for i in range(1, 6)]
+                                term_val = (p_v[-1] * 1.045) / ((d_rate - 4.5) / 100)
+                                dcf_val = (sum(p_v) + (term_val / ((1 + (d_rate / 100)) ** 5))) / shares_input
+                                st.markdown(f"Calculated DCF Fair Value: **₹{dcf_val:,.2f}**")
+
+                # ==========================================
+                # VIEW 2: QUANTITATIVE DEEP-DIVE PAGE
+                # ==========================================
+                elif dashboard_view == "🧬 Quantitative Deep-Dive":
+                    st.header(f"🧬 Structured Analytics Workspace ({raw_ticker_input})")
+                    
+                    quant_tab1, quant_tab2, quant_tab3, quant_tab4, quant_tab5, quant_tab6 = st.tabs([
+                        "🧬 Multi-Factor Quality",
+                        "👥 Peer Benchmarking Engine",
+                        "📅 Corporate Action Logs",
+                        "📊 Fundamental Margin Trends",
+                        "🎲 Monte Carlo Distributions",
+                        "🕒 Historical Backtesters"
+                    ])
+                    
+                    with quant_tab1:
+                        st.subheader("🧬 Accounting & Solvency Factor Grid")
+                        roe = stock_info.get('returnOnEquity')
+                        roa = stock_info.get('returnOnAssets')
+                        debt_to_equity = stock_info.get('debtToEquity')
+                        current_ratio = stock_info.get('currentRatio')
+                        operating_margin = stock_info.get('operatingMargins')
+                        beta_val = stock_info.get('beta')
+                        peg_ratio = stock_info.get('pegRatio')
                         
-                        st.metric("Strategy Terminal Worth", f"₹{bt_df['Strat'].iloc[-1]:,.2f}")
-                        eq_fig = go.Figure()
-                        eq_fig.add_trace(go.Scatter(x=bt_df.index, y=bt_df['Strat'], line=dict(color='green'), name='Strategy Curves'))
-                        eq_fig.add_trace(go.Scatter(x=bt_df.index, y=bt_df['BH'], line=dict(color='grey', dash='dash'), name='Benchmark Curves'))
-                        st.plotly_chart(eq_fig, use_container_width=True)
+                        def fmt_pct(val): return f"{val * 100:.2f}%" if val is not None else "N/A"
+                        def fmt_num(val, mult=1): return f"{val/mult:.2f}" if val is not None else "N/A"
+
+                        factor_data = {
+                            "Quant Performance Factor": ["Return on Equity (ROE)", "Return on Assets (ROA)", "Operating Profit Margin", "Debt-to-Equity Ratio", "Current Solvency Ratio", "Systematic Volatility (Beta)", "PEG Multiple"],
+                            "Current Reading": [fmt_pct(roe), fmt_pct(roa), fmt_pct(operating_margin), fmt_num(debt_to_equity, 100), fmt_num(current_ratio), fmt_num(beta_val), fmt_num(peg_ratio)],
+                            "Target Threshold": ["> 15.00% Optimal", "> 8.00% Optimal", "> 12.00% High Efficiency", "< 1.00 Low Leverage", "> 1.20 Cash Soundness", "< 1.00 Defensive", "< 1.50 Value Growth"]
+                        }
+                        st.table(pd.DataFrame(factor_data))
+                        
+                        st.markdown("### 🏢 Equity Block Allocation Matrix")
+                        insider_share = stock_info.get('heldPercentInsiders', 0.0) * 100
+                        inst_share = stock_info.get('heldPercentInstitutions', 0.0) * 100
+                        public_share = max(0.0, 100.0 - (insider_share + inst_share))
+                        
+                        sh_col1, sh_col2, sh_col3 = st.columns(3)
+                        sh_col1.metric("Promoter Block", f"{insider_share:.2f}%" if insider_share > 0 else "N/A")
+                        sh_col2.metric("Institutional Float (FII/DII)", f"{inst_share:.2f}%" if inst_share > 0 else "N/A")
+                        sh_col3.metric("Estimated Public Float", f"{public_share:.2f}%" if public_share < 100 else "N/A")
+
+                    with quant_tab2:
+                        st.subheader("👥 Competitor Evaluation Matrix")
+                        default_peers = "INFY, WIPRO, HCLTECH" if "TCS" in yfinance_ticker else "RELIANCE.NS, ONGC.NS, BPCL.NS"
+                        peer_input = st.text_input("Enter Peer Symbols (Comma Separated):", default_peers)
+                        
+                        peer_symbols = [p.strip().upper() for p in peer_input.split(",") if p.strip()]
+                        if yfinance_ticker not in peer_symbols:
+                            peer_symbols.insert(0, yfinance_ticker)
+                            
+                        peer_matrix = []
+                        for symbol in peer_symbols:
+                            sym_clean = f"{symbol}.NS" if not symbol.endswith(".NS") and not symbol.startswith("^") else symbol
+                            try:
+                                p_info = yf.Ticker(sym_clean).info
+                                peer_matrix.append({
+                                    "Ticker": symbol,
+                                    "Price (₹)": f"₹{p_info.get('currentPrice', p_info.get('regularPrice', 0)):,.2f}",
+                                    "P/E Multiple": round(p_info.get('trailingPE', 0), 2) or "N/A",
+                                    "P/B Ratio": round(p_info.get('priceToBook', 0), 2) or "N/A",
+                                    "ROE (%)": f"{p_info.get('returnOnEquity', 0)*100:.2f}%",
+                                    "Op. Margin (%)": f"{p_info.get('operatingMargins', 0)*100:.2f}%"
+                                })
+                            except Exception:
+                                continue
+                        if peer_matrix:
+                            st.table(pd.DataFrame(peer_matrix))
+
+                    with quant_tab3:
+                        st.subheader("📅 Adjustments & Historical Share Splits")
+                        if not extended_actions.empty:
+                            clean_actions = extended_actions.copy()
+                            clean_actions.index = pd.to_datetime(clean_actions.index).strftime('%d %b %Y')
+                            st.dataframe(clean_actions.sort_index(ascending=False), use_container_width=True)
+                        else:
+                            st.info("No recorded adjustments tracking on this engine pipeline.")
+
+                    with quant_tab4:
+                        st.subheader("📊 Top-line vs Balance Income Vectors")
+                        rev_row = robust_find_row(extended_financials, "TotalRevenue")
+                        net_row = robust_find_row(extended_financials, "NetIncome")
+                        
+                        if rev_row is not None and net_row is not None:
+                            years = [pd.to_datetime(c).strftime('%Y') for c in extended_financials.columns]
+                            rev_vals = [float(v) / 10000000 for v in rev_row.values]
+                            net_vals = [float(v) / 10000000 for v in net_row.values]
+                            
+                            trend_fig = go.Figure()
+                            trend_fig.add_trace(go.Bar(x=years, y=rev_vals, name='Total Revenue (Cr)', marker_color='#007bff'))
+                            trend_fig.add_trace(go.Bar(x=years, y=net_vals, name='Net Income (Cr)', marker_color='#28a745'))
+                            trend_fig.update_layout(barmode='group', height=400, yaxis_title="Value in ₹ Crores", margin=dict(t=20, b=20, l=0, r=0))
+                            st.plotly_chart(trend_fig, use_container_width=True)
+                        else:
+                            st.warning("Annual income statements are locked or unavailable on this specific asset structure.")
+
+                    with quant_tab5:
+                        st.subheader("🎲 30-Day Randomized Variance Walk Simulations")
+                        daily_vol = df['Daily_Return'].std()
+                        if pd.isna(daily_vol) or daily_vol == 0: daily_vol = 0.015
+                        
+                        num_days, num_sims = 30, 150
+                        sim_matrix = np.zeros((num_days, num_sims))
+                        sim_matrix[0] = latest_close
+                        
+                        for d in range(1, num_days):
+                            random_shocks = np.random.normal(0, daily_vol, num_sims)
+                            sim_matrix[d] = sim_matrix[d-1] * np.exp(random_shocks)
+                            
+                        mc_fig = go.Figure()
+                        for sim in range(num_sims):
+                            mc_fig.add_trace(go.Scatter(y=sim_matrix[:, sim], mode='lines', line=dict(width=0.5), opacity=0.3, showlegend=False))
+                            
+                        mc_fig.update_layout(height=400, xaxis_title="Trading Days Forward", yaxis_title="Target Share Price (₹)", margin=dict(t=10, b=10, l=0, r=0))
+                        st.plotly_chart(mc_fig, use_container_width=True)
+                        
+                        final_day_distribution = sim_matrix[-1, :]
+                        p10 = np.percentile(final_day_distribution, 10)
+                        p50 = np.percentile(final_day_distribution, 50)
+                        p90 = np.percentile(final_day_distribution, 90)
+                        
+                        st.markdown(f"""
+                        *   **10th Percentile Outlier Downside Risk Boundary:** `₹{p10:,.2f}`
+                        *   **50th Percentile Central Distribution Anchor:** `₹{p50:,.2f}`
+                        *   **90th Percentile Outlier Breakout Boundary:** `₹{p90:,.2f}`
+                        """)
+
+                    with quant_tab6:
+                        st.subheader("🕒 Historical Strategy Simulation Run")
+                        b_col1, b_col2 = st.columns(2)
+                        with b_col1: strategy_choice = st.selectbox("Select Vector Target:", ["SMA Crossover (50 vs 200)", "MACD Line Crossover"])
+                        with b_col2: initial_capital = st.number_input("Starting Capital (₹)", value=100000)
+                        
+                        bt_df = df.dropna(subset=['SMA_200']).copy() if strategy_choice == "SMA Crossover (50 vs 200)" else df.dropna(subset=['Signal_Line']).copy()
+                        
+                        if bt_df.empty:
+                            st.error("Insufficient timeline breadth available to backtest.")
+                        else:
+                            pos, cash, sh, hist = 0, initial_capital, 0, []
+                            for date, row in bt_df.iterrows():
+                                buy = row['SMA_50'] > row['SMA_200'] if strategy_choice == "SMA Crossover (50 vs 200)" else row['MACD'] > row['Signal_Line']
+                                if pos == 0 and buy:
+                                    sh, cash, pos = cash / row['Close'], 0, 1
+                                elif pos == 1 and not buy:
+                                    cash, sh, pos = sh * row['Close'], 0, 0
+                                hist.append(cash + (sh * row['Close']))
+                                
+                            bt_df['Strat'] = hist
+                            bt_df['BH'] = (initial_capital / bt_df['Close'].iloc[0]) * bt_df['Close']
+                            
+                            st.metric("Strategy Terminal Worth", f"₹{bt_df['Strat'].iloc[-1]:,.2f}")
+                            eq_fig = go.Figure()
+                            eq_fig.add_trace(go.Scatter(x=bt_df.index, y=bt_df['Strat'], line=dict(color='green'), name='Strategy Run'))
+                            eq_fig.add_trace(go.Scatter(x=bt_df.index, y=bt_df['BH'], line=dict(color='grey', dash='dash'), name='Buy & Hold Base'))
+                            st.plotly_chart(eq_fig, use_container_width=True)
 
         except Exception as e:
             st.error(f"Global execution framework runtime error: {e}")
