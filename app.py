@@ -9,13 +9,12 @@ from datetime import datetime
 # ==========================================
 # 1. PAGE CONFIGURATION & MOBILE STYLING
 # ==========================================
-st.set_page_config(page_title="Indian Quant Deep-Dive Dashboard", layout="wide")
-st.title("📊 Indian Quant Trading & Deep-Dive Dashboard")
+st.set_page_config(page_title="Indian Quant Verdict Dashboard", layout="wide")
+st.title("🛡️ Institutional Quant Verdict & Analytics Dashboard")
 
-# Global CSS Injection to Freeze Table Headers and Handle Long Tables
+# Global CSS Injection for Scannability & Sticky Elements
 st.markdown("""
 <style>
-    /* Freeze table headers dynamically during scrolling */
     th {
         position: -webkit-sticky;
         position: sticky;
@@ -23,9 +22,13 @@ st.markdown("""
         background-color: #f8f9fa !important;
         z-index: 5;
     }
-    /* Ensure markdown tables render cleanly on mobile viewports */
     div[data-testid="stTable"] {
         overflow-x: auto;
+    }
+    .verdict-box {
+        padding: 20px;
+        border-radius: 8px;
+        margin-bottom: 25px;
     }
 </style>
 """, unsafe_allow_html=True)
@@ -36,16 +39,15 @@ st.markdown("""
 st.sidebar.header("🎯 Dashboard Workspace")
 dashboard_view = st.sidebar.radio(
     "Select Page View:",
-    ["📈 Market View & Core Metrics", "🧬 Quantitative Deep-Dive"]
+    ["📈 Market View & Full Verdict", "🧬 Quantitative Deep-Dive"]
 )
 
 st.sidebar.markdown("---")
 st.sidebar.header("Chart Settings")
 show_bollinger = st.sidebar.checkbox("Show Bollinger Bands", value=True)
 
-# Ticker Input in Sidebar for universal page context access
 raw_ticker_input = st.sidebar.text_input(
-    "🔍 Search Indian Ticker (e.g., RELIANCE, TCS, INFY):", 
+    "🔍 Search Indian Ticker (e.g., RELIANCE, TCS, HDFCBANK):", 
     "RELIANCE"
 ).upper().strip()
 
@@ -177,7 +179,7 @@ def robust_find_row(df, keyword):
 # 4. DATA COMPILATION RUNNER
 # ==========================================
 if yfinance_ticker:
-    with st.spinner("Processing core parameters and aligning metrics..."):
+    with st.spinner("Executing structural algorithmic calculations..."):
         try:
             raw_df, stock_info, stock_news = load_data(yfinance_ticker, "5y")
             extended_actions, extended_financials = load_extended_quant_data(yfinance_ticker)
@@ -191,46 +193,120 @@ if yfinance_ticker:
                 price_change = latest_close - df['Close'].iloc[-2]
                 pct_change = (price_change / df['Close'].iloc[-2]) * 100
                 
+                # News Filter
                 clean_news_stream = []
                 for item in stock_news:
                     if item.get('title') and str(item.get('title')).strip().lower() != "none" and item.get('link') and item.get('providerPublishTime', 0) > 0:
                         clean_news_stream.append(item)
 
                 # ==========================================
-                # VIEW 1: MARKET VIEW & CORE METRICS PAGE
+                # MULTI-DIMENSIONAL VERDICT ALGORITHM ENGINE
                 # ==========================================
-                if dashboard_view == "📈 Market View & Core Metrics":
-                    st.header(f"📈 Core Metrics Workspace ({raw_ticker_input})")
+                bull_points = []
+                bear_points = []
+                
+                # Vector 1: Technical Alignment
+                latest_rsi = df['RSI'].iloc[-1] if not pd.isna(df['RSI'].iloc[-1]) else 50.0
+                latest_sma50 = df['SMA_50'].iloc[-1]
+                latest_sma200 = df['SMA_200'].iloc[-1]
+                latest_macd_hist = df['MACD_Hist'].iloc[-1]
+                
+                if latest_sma50 > latest_sma200: bull_points.append("Golden Cross confirmed: 50 SMA is riding structurally above the 200 SMA.")
+                else: bear_points.append("Death Cross structure: 50 SMA is trailing below the 200 SMA showing macro technical pressure.")
+                
+                if latest_rsi < 35: bull_points.append(f"RSI reads highly oversold at {latest_rsi:.1f}, signaling tactical exhaustion.")
+                elif latest_rsi > 70: bear_points.append(f"RSI reads overbought at {latest_rsi:.1f}, flashing immediate distribution risk.")
+                
+                if latest_macd_hist > 0: bull_points.append("MACD histogram shows positive expansion above signal threshold lines.")
+                else: bear_points.append("MACD momentum shows near-term bearish convergence.")
+                
+                # Vector 2: Fundamental Strengths
+                roe = stock_info.get('returnOnEquity')
+                operating_margin = stock_info.get('operatingMargins')
+                if roe and roe >= 0.15: bull_points.append(f"High Capital Return Efficiency: ROE sits optimally at {roe*100:.2f}%.")
+                elif roe and roe < 0.10: bear_points.append(f"Depressed Capital Return Efficiency: ROE trails below baseline expectations at {roe*100:.2f}%.")
+                
+                if operating_margin and operating_margin > 0.12: bull_points.append(f"Strong operational baseline health with core margins at {operating_margin*100:.2f}%.")
+                
+                # Vector 3: Capital Structure & Debt Risk
+                debt_to_equity = stock_info.get('debtToEquity')
+                beta_val = stock_info.get('beta')
+                if debt_to_equity and debt_to_equity > 150: bear_points.append(f"Leverage Flag: High Debt-to-Equity balance noted at {debt_to_equity/100:.2f}.")
+                elif debt_to_equity and debt_to_equity <= 100: bull_points.append("Protected Capital Base: Leverage models track safely with clean debt levels.")
+                
+                # Vector 4: Fair Value Margin of Safety (MoS) Check
+                yf_eps = stock_info.get('trailingEps', 0)
+                yf_bvps = stock_info.get('bookValue', 0)
+                graham_val = np.sqrt(22.5 * yf_eps * yf_bvps) if (yf_eps and yf_bvps and yf_eps > 0 and yf_bvps > 0) else None
+                
+                if graham_val and latest_close < graham_val:
+                    mos = ((graham_val - latest_close) / graham_val) * 100
+                    bull_points.append(f"Under-valued on Graham Intrinsic formulas. Trading with a {mos:.1f}% Margin of Safety.")
+                elif graham_val and latest_close > (graham_val * 1.4):
+                    bear_points.append("Trading at a significant premium above historical Graham Intrinsic multiples.")
+
+                # Calculate Comprehensive Verdict
+                total_signals = len(bull_points) + len(bear_points)
+                bull_ratio = len(bull_points) / total_signals if total_signals > 0 else 0.5
+                
+                if bull_ratio >= 0.75:
+                    master_verdict = "STRATEGIC ACCUMULATION (STRONG BUY)"
+                    box_bg, border_color, accent_text = "#d4edda", "#28a745", "#155724"
+                    summary_desc = "The algorithmic model flags clear structural backing across multiple domains. Valuations offer a strong buffer, operational health scales cleanly above institutional hurdles, and tactical momentum signals near-term upside velocity."
+                elif 0.55 <= bull_ratio < 0.75:
+                    master_verdict = "TACTICAL ACCUMULATION (MILD BUY / HOLD)"
+                    box_bg, border_color, accent_text = "#fff3cd", "#ffc107", "#856404"
+                    summary_desc = "The company retains high core asset quality, but near-term momentum requires careful risk allocation or waiting for mild positional entry liquidations before executing major buy tickets."
+                elif 0.35 <= bull_ratio < 0.55:
+                    master_verdict = "NEUTRAL WAIT / TRACKING CONTEXT"
+                    box_bg, border_color, accent_text = "#e2e3e5", "#6c757d", "#383d41"
+                    summary_desc = "Conflicting vector paths detected. Fundamental strengths are currently being offset by poor macro price momentum or premium valuation hurdles. Maintain a neutral posture on the asset."
+                else:
+                    master_verdict = "RISK AVOIDANCE ORDER (UNDERPERFORM / SELL)"
+                    box_bg, border_color, accent_text = "#f8d7da", "#dc3545", "#721c24"
+                    summary_desc = "Defensive frameworks triggered. High structural leverage, degrading technical baselines, or extremely overstretched multiples indicate significant downside projection risk paths."
+
+                # ==========================================
+                # VIEW 1: MARKET VIEW & COMPREHENSIVE VERDICT
+                # ==========================================
+                if dashboard_view == "📈 Market View & Full Verdict":
+                    st.header(f"📈 Strategic Asset Intelligence Center ({raw_ticker_input})")
                     
-                    # Strategy Verdict Processing
-                    latest_rsi = df['RSI'].iloc[-1] if not pd.isna(df['RSI'].iloc[-1]) else 50.0
-                    latest_sma50 = df['SMA_50'].iloc[-1]
-                    latest_sma200 = df['SMA_200'].iloc[-1]
+                    # Core High-Impact Verdict Block
+                    st.markdown(f"""
+                    <div style="background-color:{box_bg}; border-left:6px solid {border_color}; padding:20px; border-radius:8px;">
+                        <h3 style="margin:0 0 10px 0; color:{accent_text}; font-weight:bold;">🔍 SYSTEM DISPATCH: {master_verdict}</h3>
+                        <p style="margin:0; color:{accent_text}; font-size:15px; line-height:1.5;"><strong>Executive Summary Analysis:</strong> {summary_desc}</p>
+                    </div>
+                    """, unsafe_allow_html=True)
                     
-                    score = 0
-                    if latest_sma50 > latest_sma200: score += 1
-                    else: score -= 1
-                    if df['MACD'].iloc[-1] > df['Signal_Line'].iloc[-1]: score += 1
-                    else: score -= 1
-                    if latest_rsi < 30: score += 1.5
-                    elif latest_rsi > 70: score -= 1.5
-
-                    if score >= 2: verdict, bg_color, text_color = "HIGH CONVICTION BUY", "#d4edda", "#155724"
-                    elif 0.5 <= score < 2: verdict, bg_color, text_color = "CAUTIOUS ACCUMULATION", "#fff3cd", "#856404"
-                    elif -1 <= score < 0.5: verdict, bg_color, text_color = "NEUTRAL HOLD / WATCH", "#e2e3e5", "#383d41"
-                    else: verdict, bg_color, text_color = "HIGH RISK AVOID", "#f8d7da", "#721c24"
-
-                    st.markdown(f'<div style="background-color:{bg_color}; padding:15px; border-radius:8px; border-left:6px solid {text_color}; margin-bottom:15px;"><h4 style="margin:0; color:{text_color}; font-weight:bold;">STRATEGY VERDICT: {verdict} (Score: {score:+.1f})</h4></div>', unsafe_allow_html=True)
-
+                    st.markdown("---")
+                    
+                    # Split Columns for Bull vs Bear Factors
+                    v_col1, v_col2 = st.columns(2)
+                    with v_col1:
+                        st.markdown("### ✅ Positive Structural Drivers (Bulls)")
+                        if bull_points:
+                            for p in bull_points: st.markdown(f" * {p}")
+                        else: st.write("No distinct positive algorithmic signals triggered.")
+                    with v_col2:
+                        st.markdown("### ⚠️ Structural Risk Warnings (Bears)")
+                        if bear_points:
+                            for p in bear_points: st.markdown(f" * {p}")
+                        else: st.write("No severe structural risk vectors flagged.")
+                        
+                    st.markdown("---")
+                    
+                    # Primary Metrics
                     m1, m2, m3, m4 = st.columns(4)
                     m1.metric("Current Value", f"₹{latest_close:,.2f}", f"{price_change:+.2f} ({pct_change:+.2f}%)")
                     m2.metric("Relative Strength Index", f"{latest_rsi:.1f}")
                     m3.metric("MACD Divergence", f"{df['MACD_Hist'].iloc[-1]:.2f}")
-                    m4.metric("Signal Weight", f"{score:+.1f}")
+                    m4.metric("Bull Convergence Weight", f"{bull_ratio*100:.1f}%")
 
                     st.markdown("---")
                     
-                    # Organized Layout Components
+                    # Charting Framework & News
                     chart_col, sidebar_news_col = st.columns([3, 1.2]) if clean_news_stream else (st.container(), None)
                     
                     with chart_col:
@@ -274,27 +350,23 @@ if yfinance_ticker:
                             st.metric("📊 14-Day Average True Range (ATR)", f"₹{atr_val:.2f}")
 
                     with core_tab2:
-                        yf_pe = stock_info.get('trailingPE', 20.0)
-                        yf_eps = stock_info.get('trailingEps', 25.0)
-                        yf_bvps = stock_info.get('bookValue', 150.0)
                         yf_mcap = stock_info.get('marketCap', latest_close * 1000000)
-                        
                         yf_fcf_crores = stock_info.get('freeCashflow', yf_mcap * 0.05) / 10000000
                         yf_shares_crores = stock_info.get('sharesOutstanding', yf_mcap / latest_close) / 10000000
 
                         calc_col1, calc_col2 = st.columns(2)
                         with calc_col1:
-                            st.markdown("#### 🏛️ Graham Model")
-                            eps_input = st.number_input("EPS", value=float(yf_eps), format="%.2f", key="core_eps")
-                            bvps_input = st.number_input("BVPS", value=float(yf_bvps), format="%.2f", key="core_bvps")
+                            st.markdown("#### 🏛️ Graham Valuation Model")
+                            eps_input = st.number_input("EPS", value=float(yf_eps) if yf_eps else 10.0, format="%.2f", key="core_eps")
+                            bvps_input = st.number_input("BVPS", value=float(yf_bvps) if yf_bvps else 100.0, format="%.2f", key="core_bvps")
                             if eps_input > 0 and bvps_input > 0:
                                 g_val = np.sqrt(22.5 * eps_input * bvps_input)
                                 st.markdown(f"Calculated Graham Value: **₹{g_val:,.2f}**")
 
                         with calc_col2:
-                            st.markdown("#### 🌀 DCF Model (Calibrated in Crores)")
-                            fcf_input = st.number_input("FCF (₹ Crores)", value=float(yf_fcf_crores), format="%.2f", key="core_fcf")
-                            shares_input = st.number_input("Shares Out (Crores)", value=float(yf_shares_crores), format="%.2f", key="core_sh")
+                            st.markdown("#### 🌀 Multi-Stage DCF Model (₹ Crores)")
+                            fcf_input = st.number_input("FCF (₹ Crores)", value=float(yf_fcf_crores) if yf_fcf_crores else 500.0, format="%.2f", key="core_fcf")
+                            shares_input = st.number_input("Shares Out (Crores)", value=float(yf_shares_crores) if yf_shares_crores else 50.0, format="%.2f", key="core_sh")
                             g_rate = st.slider("Growth Rate (%)", -5.0, 40.0, 12.0, 0.5, key="core_g")
                             d_rate = st.slider("Discount Rate (%)", 5.0, 25.0, 11.0, 0.5, key="core_d")
                             
@@ -308,33 +380,27 @@ if yfinance_ticker:
                 # VIEW 2: QUANTITATIVE DEEP-DIVE PAGE
                 # ==========================================
                 elif dashboard_view == "🧬 Quantitative Deep-Dive":
-                    st.header(f"🧬 Structured Analytics Workspace ({raw_ticker_input})")
+                    st.header(f"🧬 Structured Analytics Deep-Dive Workspace ({raw_ticker_input})")
                     
                     quant_tab1, quant_tab2, quant_tab3, quant_tab4, quant_tab5, quant_tab6 = st.tabs([
-                        "🧬 Multi-Factor Quality",
+                        "🧬 Multi-Factor Quality Matrix",
                         "👥 Peer Benchmarking Engine",
                         "📅 Corporate Action Logs",
                         "📊 Fundamental Margin Trends",
                         "🎲 Monte Carlo Distributions",
-                        "🕒 Historical Backtesters"
+                        "🕒 Historical Strategy Backtester"
                     ])
                     
                     with quant_tab1:
                         st.subheader("🧬 Accounting & Solvency Factor Grid")
-                        roe = stock_info.get('returnOnEquity')
-                        roa = stock_info.get('returnOnAssets')
-                        debt_to_equity = stock_info.get('debtToEquity')
-                        current_ratio = stock_info.get('currentRatio')
                         operating_margin = stock_info.get('operatingMargins')
-                        beta_val = stock_info.get('beta')
-                        peg_ratio = stock_info.get('pegRatio')
                         
                         def fmt_pct(val): return f"{val * 100:.2f}%" if val is not None else "N/A"
                         def fmt_num(val, mult=1): return f"{val/mult:.2f}" if val is not None else "N/A"
 
                         factor_data = {
                             "Quant Performance Factor": ["Return on Equity (ROE)", "Return on Assets (ROA)", "Operating Profit Margin", "Debt-to-Equity Ratio", "Current Solvency Ratio", "Systematic Volatility (Beta)", "PEG Multiple"],
-                            "Current Reading": [fmt_pct(roe), fmt_pct(roa), fmt_pct(operating_margin), fmt_num(debt_to_equity, 100), fmt_num(current_ratio), fmt_num(beta_val), fmt_num(peg_ratio)],
+                            "Current Reading": [fmt_pct(roe), fmt_pct(stock_info.get('returnOnAssets')), fmt_pct(operating_margin), fmt_num(debt_to_equity, 100) if debt_to_equity else "N/A", fmt_num(stock_info.get('currentRatio')), fmt_num(beta_val), fmt_num(stock_info.get('pegRatio'))],
                             "Target Threshold": ["> 15.00% Optimal", "> 8.00% Optimal", "> 12.00% High Efficiency", "< 1.00 Low Leverage", "> 1.20 Cash Soundness", "< 1.00 Defensive", "< 1.50 Value Growth"]
                         }
                         st.table(pd.DataFrame(factor_data))
@@ -383,7 +449,7 @@ if yfinance_ticker:
                             clean_actions.index = pd.to_datetime(clean_actions.index).strftime('%d %b %Y')
                             st.dataframe(clean_actions.sort_index(ascending=False), use_container_width=True)
                         else:
-                            st.info("No recorded adjustments tracking on this engine pipeline.")
+                            st.info("No recorded corporate actions or adjustments tracked on this engine timeline.")
 
                     with quant_tab4:
                         st.subheader("📊 Top-line vs Balance Income Vectors")
@@ -401,7 +467,7 @@ if yfinance_ticker:
                             trend_fig.update_layout(barmode='group', height=400, yaxis_title="Value in ₹ Crores", margin=dict(t=20, b=20, l=0, r=0))
                             st.plotly_chart(trend_fig, use_container_width=True)
                         else:
-                            st.warning("Annual income statements are locked or unavailable on this specific asset structure.")
+                            st.warning("Annual income statements are unavailable on this specific asset structure.")
 
                     with quant_tab5:
                         st.subheader("🎲 30-Day Randomized Variance Walk Simulations")
@@ -437,13 +503,13 @@ if yfinance_ticker:
                     with quant_tab6:
                         st.subheader("🕒 Historical Strategy Simulation Run")
                         b_col1, b_col2 = st.columns(2)
-                        with b_col1: strategy_choice = st.selectbox("Select Vector Target:", ["SMA Crossover (50 vs 200)", "MACD Line Crossover"])
+                        with b_col1: strategy_choice = st.selectbox("Select Strategy Rule Line:", ["SMA Crossover (50 vs 200)", "MACD Line Crossover"])
                         with b_col2: initial_capital = st.number_input("Starting Capital (₹)", value=100000)
                         
                         bt_df = df.dropna(subset=['SMA_200']).copy() if strategy_choice == "SMA Crossover (50 vs 200)" else df.dropna(subset=['Signal_Line']).copy()
                         
                         if bt_df.empty:
-                            st.error("Insufficient timeline breadth available to backtest.")
+                            st.error("Insufficient timeline breadth available to backtest indicators.")
                         else:
                             pos, cash, sh, hist = 0, initial_capital, 0, []
                             for date, row in bt_df.iterrows():
