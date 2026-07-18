@@ -4,6 +4,7 @@ import pandas as pd
 import numpy as np
 import plotly.graph_objects as go
 import requests
+from datetime import datetime
 
 # ==========================================
 # 1. PAGE CONFIGURATION & THEME SETUP
@@ -12,13 +13,15 @@ st.set_page_config(page_title="Indian Quant Deep-Dive Dashboard", layout="wide")
 st.title("📊 Indian Quant Trading & Deep-Dive Dashboard")
 
 # ==========================================
-# 2. GLOBAL SIDEBAR CONFIGURATION
+# 2. MOBILE-FIRST TOP-LEVEL NAVIGATION & SEARCH
 # ==========================================
-st.sidebar.header("Configuration")
-raw_ticker_input = st.sidebar.text_input(
-    "Enter Indian Ticker (e.g., RELIANCE, TCS, INFY, ^NSEI):", 
-    "RELIANCE"
-).upper().strip()
+st.markdown("---")
+col_search, col_blank = st.columns([2, 2])
+with col_search:
+    raw_ticker_input = st.text_input(
+        "🔍 Search Indian Ticker (e.g., RELIANCE, TCS, INFY, HDFCBANK, ^NSEI):", 
+        "RELIANCE"
+    ).upper().strip()
 
 # Exchange Suffixing Logic
 if not raw_ticker_input.startswith('^') and '.' not in raw_ticker_input:
@@ -26,8 +29,8 @@ if not raw_ticker_input.startswith('^') and '.' not in raw_ticker_input:
 else:
     yfinance_ticker = raw_ticker_input
 
-st.sidebar.markdown("---")
-st.sidebar.subheader("Technical Overlays")
+# Move layout configurations to sidebar to keep screen clean
+st.sidebar.header("Chart Settings")
 show_bollinger = st.sidebar.checkbox("Show Bollinger Bands", value=True)
 show_fib = st.sidebar.checkbox("Show Fibonacci Levels", value=False)
 
@@ -69,35 +72,40 @@ def fetch_from_stooq(ticker):
     df.index.name = 'Date'
     return df
 
-@st.cache_data(ttl=3600)
+@st.cache_data(ttl=1800)
 def load_data(ticker, period="5y"):
     df = None
     info = {}
+    news = []
     try:
         session = requests.Session()
         session.headers.update(get_robust_headers())
-        data = yf.Ticker(ticker, session=session)
-        df = data.history(period=period)
+        ticker_obj = yf.Ticker(ticker, session=session)
+        df = ticker_obj.history(period=period)
         if df.empty:
             raise ValueError("Empty response from Yahoo Finance.")
     except Exception as yf_error:
-        st.sidebar.warning("Yahoo API is rate-limited on the cloud server. Fetching from Stooq fallback...")
+        st.sidebar.warning("Yahoo API limit reached. Fetching prices from Stooq fallback...")
         try:
             df = fetch_from_stooq(ticker)
         except Exception as stooq_error:
-            raise RuntimeError(f"Yahoo blocked: {yf_error}. Backup failed: {stooq_error}.")
+            raise RuntimeError(f"Data stream disconnected: {yf_error}. Backup failed: {stooq_error}.")
             
     try:
         session = requests.Session()
         session.headers.update(get_robust_headers())
-        data = yf.Ticker(ticker, session=session)
-        info = data.info
+        ticker_obj = yf.Ticker(ticker, session=session)
+        info = ticker_obj.info
+        news = ticker_obj.news
         if not isinstance(info, dict):
             info = {}
+        if not isinstance(news, list):
+            news = []
     except Exception:
         info = {}
+        news = []
         
-    return df, info
+    return df, info, news
 
 def calculate_indicators(df):
     df = df.copy()
@@ -124,27 +132,36 @@ def calculate_indicators(df):
     df['BB_Std'] = df['Close'].rolling(window=20).std()
     df['BB_Upper'] = df['BB_Mid'] + (2 * df['BB_Std'])
     df['BB_Lower'] = df['BB_Mid'] - (2 * df['BB_Std'])
+    
+    # Average True Range (ATR) for Advanced Volatility Tool
+    high_low = df['High'] - df['Low']
+    high_cp = np.abs(df['High'] - df['Close'].shift())
+    low_cp = np.abs(df['Low'] - df['Close'].shift())
+    tr = pd.concat([high_low, high_cp, low_cp], axis=1).max(axis=1)
+    df['ATR'] = tr.rolling(window=14).mean()
+    
     return df
 
 # ==========================================
-# 4. RUN CALCULATIONS & GENERATE INTERFACE
+# 4. RUN SYSTEM CALCULATIONS & TABS
 # ==========================================
 if yfinance_ticker:
-    with st.spinner("Fetching market data and running calculations..."):
+    with st.spinner("Compiling cross-asset indicators and loading news feeds..."):
         try:
-            raw_df, stock_info = load_data(yfinance_ticker, "5y")
+            raw_df, stock_info, stock_news = load_data(yfinance_ticker, "5y")
             
             if raw_df is None or raw_df.empty:
-                st.error("No data returned. Please verify ticker symbols.")
+                st.error("Invalid ticker string or matching asset not found.")
             else:
                 df = calculate_indicators(raw_df)
                 
-                # Tabbed Interface Setup
-                tab1, tab2, tab3, tab4 = st.tabs([
-                    "🔍 Live Deep Analysis", 
-                    "📊 Historical Backtest", 
-                    "📈 Volatility & Risk Metrics",
-                    "💎 Intrinsic Value Calculators"
+                # Tabbed Interface Layout
+                tab1, tab2, tab3, tab4, tab5 = st.tabs([
+                    "🔍 Technical Radar", 
+                    "🧬 Advanced Quant Factors",
+                    "📐 Volatility & Pivot Target Levels",
+                    "💎 Valuation Models",
+                    "🕒 Engine Backtester"
                 ])
                 
                 # Baseline metrics
@@ -154,7 +171,7 @@ if yfinance_ticker:
                 pct_change = (price_change / prev_close) * 100 if prev_close != 0 else 0
                 
                 # ==========================================
-                # TAB 1: LIVE DEEP ANALYSIS
+                # TAB 1: TECHNICAL RADAR & NEWS FEEDS
                 # ==========================================
                 with tab1:
                     latest_rsi = df['RSI'].iloc[-1] if not pd.isna(df['RSI'].iloc[-1]) else 50.0
@@ -163,123 +180,258 @@ if yfinance_ticker:
                     latest_macd = df['MACD'].iloc[-1]
                     latest_signal = df['Signal_Line'].iloc[-1]
                     
-                    # Scoring Logic
                     score = 0
                     reasons = []
                     
                     if not pd.isna(latest_sma50) and not pd.isna(latest_sma200):
                         if latest_sma50 > latest_sma200:
                             score += 1
-                            reasons.append("🟢 **Long-Term Trend (SMA):** Bullish (50 SMA is above 200 SMA)")
+                            reasons.append("🟢 **Long-Term Trend (SMA):** Bullish Structure (50 SMA > 200 SMA)")
                         else:
                             score -= 1
-                            reasons.append("🔴 **Long-Term Trend (SMA):** Bearish (50 SMA is below 200 SMA)")
+                            reasons.append("🔴 **Long-Term Trend (SMA):** Bearish Structure (50 SMA < 200 SMA)")
                     
                     if not pd.isna(latest_macd) and not pd.isna(latest_signal):
                         if latest_macd > latest_signal:
                             score += 1
-                            reasons.append("🟢 **Short-Term Momentum (MACD):** Bullish crossover detected")
+                            reasons.append("🟢 **Short-Term Momentum (MACD):** Bullish crossover active")
                         else:
                             score -= 1
-                            reasons.append("🔴 **Short-Term Momentum (MACD):** Bearish crossover detected")
+                            reasons.append("🔴 **Short-Term Momentum (MACD):** Bearish compression under signal line")
                             
                     if latest_rsi < 30:
                         score += 1.5
-                        reasons.append(f"🟢 **Exhaustion (RSI):** Oversold ({latest_rsi:.1f}) - Sellers are exhausted")
+                        reasons.append(f"🟢 **Exhaustion (RSI):** Oversold Condition ({latest_rsi:.1f})")
                     elif latest_rsi > 70:
                         score -= 1.5
-                        reasons.append(f"🔴 **Exhaustion (RSI):** Overbought ({latest_rsi:.1f}) - Buyers are exhausted")
-                    else:
-                        reasons.append(f"🔵 **Exhaustion (RSI):** Neutral ({latest_rsi:.1f}) - Trend is balanced")
+                        reasons.append(f"🔴 **Exhaustion (RSI):** Overbought Condition ({latest_rsi:.1f})")
 
-                    latest_bbu = df['BB_Upper'].iloc[-1]
-                    latest_bbl = df['BB_Lower'].iloc[-1]
-                    if not pd.isna(latest_bbu) and not pd.isna(latest_bbl):
-                        if latest_close >= latest_bbu:
-                            score -= 1
-                            reasons.append("🔴 **Volatility (BB):** Overextended (Price above Upper Bollinger Band)")
-                        elif latest_close <= latest_bbl:
-                            score += 1
-                            reasons.append("🟢 **Volatility (BB):** Underextended (Price below Lower Bollinger Band)")
-                    
+                    # Formulate Investment Verdict banner
                     if score >= 2:
-                        verdict, verdict_msg, bg_color, text_color = "🟢 YES - HIGH CONVICTION BUY", "Technical parameters have aligned cleanly. The risk-to-reward ratio is in your favor.", "#d4edda", "#155724"
+                        verdict, bg_color, text_color = "HIGH CONVICTION BUY", "#d4edda", "#155724"
                     elif 0.5 <= score < 2:
-                        verdict, verdict_msg, bg_color, text_color = "🟡 CAUTIOUS / STAGGERED BUY", "Indicators are leaning positive, but moderate overhead resistance remains. Accumulate slowly.", "#fff3cd", "#856404"
+                        verdict, bg_color, text_color = "CAUTIOUS ACCUMULATION", "#fff3cd", "#856404"
                     elif -1 <= score < 0.5:
-                        verdict, verdict_msg, bg_color, text_color = "⚪ HOLD / WATCH", "Signals are neutral or conflicting. No distinct mathematical edge exists right now.", "#e2e3e5", "#383d41"
+                        verdict, bg_color, text_color = "NEUTRAL HOLD / WATCH", "#e2e3e5", "#383d41"
                     else:
-                        verdict, verdict_msg, bg_color, text_color = "🔴 NO - STAY OUT / SELL", "Highly bearish structural momentum. Elevated risk of structural drawdown.", "#f8d7da", "#721c24"
+                        verdict, bg_color, text_color = "HIGH RISK AVOID / LIQUIDATE", "#f8d7da", "#721c24"
 
                     st.markdown(f"""
-                    <div style="background-color:{bg_color}; padding:20px; border-radius:10px; border-left:8px solid {text_color}; margin-bottom:25px;">
-                        <h3 style="margin:0; color:{text_color}; font-weight:bold;">CAN I INVEST NOW?: {verdict}</h3>
-                        <p style="margin:5px 0 0 0; color:{text_color}; font-size:16px;">{verdict_msg} <i>(Engine Total Score: {score:+.1f})</i></p>
+                    <div style="background-color:{bg_color}; padding:15px; border-radius:8px; border-left:6px solid {text_color}; margin-bottom:15px;">
+                        <h4 style="margin:0; color:{text_color}; font-weight:bold;">STRATEGY VERDICT: {verdict} (Score: {score:+.1f})</h4>
                     </div>
                     """, unsafe_allow_html=True)
 
                     col1, col2, col3, col4 = st.columns(4)
-                    col1.metric("Current Price", f"₹{latest_close:,.2f}", f"{price_change:+.2f} ({pct_change:+.2f}%)")
-                    col2.metric("RSI (14-Day)", f"{latest_rsi:.1f}")
-                    col3.metric("MACD Hist", f"{df['MACD_Hist'].iloc[-1]:.2f}")
-                    col4.metric("Engine Score", f"{score:+.1f}")
+                    col1.metric("Current Value", f"₹{latest_close:,.2f}", f"{price_change:+.2f} ({pct_change:+.2f}%)")
+                    col2.metric("Relative Strength Index", f"{latest_rsi:.1f}")
+                    col3.metric("MACD Divergence", f"{df['MACD_Hist'].iloc[-1]:.2f}")
+                    col4.metric("Signal Matrix Weight", f"{score:+.1f}")
 
                     st.markdown("---")
+                    chart_col, sidebar_news_col = st.columns([3, 1.2])
                     
-                    chart_col, text_col = st.columns([3, 1])
                     with chart_col:
-                        st.subheader("Deep Technical Chart")
                         chart_df = df[-252:] if len(df) > 252 else df
                         fig = go.Figure()
-                        
-                        fig.add_trace(go.Candlestick(x=chart_df.index, open=chart_df['Open'], high=chart_df['High'], low=chart_df['Low'], close=chart_df['Close'], name='Price'))
+                        fig.add_trace(go.Candlestick(x=chart_df.index, open=chart_df['Open'], high=chart_df['High'], low=chart_df['Low'], close=chart_df['Close'], name='Price Line'))
                         
                         if show_bollinger:
                             fig.add_trace(go.Scatter(x=chart_df.index, y=chart_df['BB_Upper'], line=dict(color='rgba(173,216,230,0.4)', width=1), name='BB Upper'))
-                            fig.add_trace(go.Scatter(x=chart_df.index, y=chart_df['BB_Lower'], line=dict(color='rgba(173,216,230,0.4)', width=1), name='BB Lower', fill='tonexty', fillcolor='rgba(173,216,230,0.08)'))
-                            fig.add_trace(go.Scatter(x=chart_df.index, y=chart_df['BB_Mid'], line=dict(color='grey', width=1, dash='dash'), name='BB Middle'))
+                            fig.add_trace(go.Scatter(x=chart_df.index, y=chart_df['BB_Lower'], line=dict(color='rgba(173,216,230,0.4)', width=1), name='BB Lower', fill='tonexty', fillcolor='rgba(173,216,230,0.04)'))
                         
-                        if show_fib:
-                            highest_high = chart_df['High'].max()
-                            lowest_low = chart_df['Low'].min()
-                            diff = highest_high - lowest_low
-                            levels = [0.0, 0.236, 0.382, 0.5, 0.618, 0.786, 1.0]
-                            colors = ['red', 'orange', 'yellow', 'green', 'blue', 'indigo', 'violet']
-                            for level, color in zip(levels, colors):
-                                value = highest_high - (level * diff)
-                                fig.add_trace(go.Scatter(x=[chart_df.index[0], chart_df.index[-1]], y=[value, value], mode="lines", line=dict(color=color, width=1, dash="dashdot"), name=f"Fib {level*100:.1f}%"))
-
-                        fig.add_trace(go.Scatter(x=chart_df.index, y=chart_df['SMA_50'], line=dict(color='blue', width=1.5), name='50 SMA'))
-                        fig.add_trace(go.Scatter(x=chart_df.index, y=chart_df['SMA_200'], line=dict(color='orange', width=1.5), name='200 SMA'))
-                        fig.update_layout(xaxis_rangeslider_visible=False, height=450, margin=dict(l=0, r=0, t=10, b=10))
+                        fig.add_trace(go.Scatter(x=chart_df.index, y=chart_df['SMA_50'], line=dict(color='blue', width=1.2), name='50 SMA'))
+                        fig.add_trace(go.Scatter(x=chart_df.index, y=chart_df['SMA_200'], line=dict(color='orange', width=1.2), name='200 SMA'))
+                        fig.update_layout(xaxis_rangeslider_visible=False, height=400, margin=dict(l=0, r=0, t=10, b=10))
                         st.plotly_chart(fig, use_container_width=True)
 
-                    with text_col:
-                        st.subheader("Deep Technical Analysis")
-                        for r in reasons:
-                            st.write(r)
+                    with sidebar_news_col:
+                        st.subheader("📰 Real-time News Stream")
+                        if stock_news:
+                            for item in stock_news[:5]:
+                                pub_time = datetime.fromtimestamp(item.get('providerPublishTime', 0)).strftime('%d %b %Y')
+                                st.markdown(f"""
+                                **[{item.get('title')}]({item.get('link')})**  
+                                <small style='color:gray;'>Publisher: {item.get('publisher')} | {pub_time}</small>
+                                ---
+                                """, unsafe_allow_html=True)
+                        else:
+                            st.info("No active specific market headlines found for this asset index.")
 
                 # ==========================================
-                # TAB 2: HISTORICAL BACKTEST
+                # TAB 2: ADVANCED QUANT FUNDAMENTAL FACTORS (NEW ADVANCED TOOL)
                 # ==========================================
                 with tab2:
-                    st.subheader("Historical Simulation Engine (5-Year Lookback)")
+                    st.subheader("🧬 Multi-Factor Fundamental Quality Matrix")
+                    st.write("Deep corporate accounting factors retrieved live from core balance sheets via Yahoo Engine.")
+                    
+                    # Extract variables safely
+                    roe = stock_info.get('returnOnEquity')
+                    roa = stock_info.get('returnOnAssets')
+                    debt_to_equity = stock_info.get('debtToEquity')
+                    current_ratio = stock_info.get('currentRatio')
+                    operating_margin = stock_info.get('operatingMargins')
+                    beta_val = stock_info.get('beta')
+                    peg_ratio = stock_info.get('pegRatio')
+                    
+                    def fmt_pct(val): return f"{val * 100:.2f}%" if val is not None else "Data Missing"
+                    def fmt_num(val, mult=1): return f"{val/mult:.2f}" if val is not None else "Data Missing"
+
+                    # Build Scannable Factor Evaluation Table Matrix
+                    factor_data = {
+                        "Quant Performance Factor": ["Return on Equity (ROE)", "Return on Assets (ROA)", "Operating Profit Margin", "Debt-to-Equity Ratio", "Current Solvency Ratio", "Systematic Asset Volatility (Beta)", "PEG Valuation Expansion Multiple"],
+                        "Current Asset Reading": [fmt_pct(roe), fmt_pct(roa), fmt_pct(operating_margin), fmt_num(debt_to_equity, 100), fmt_num(current_ratio), fmt_num(beta_val), fmt_num(peg_ratio)],
+                        "Risk Benchmark Target Threshold": ["> 15.00% Optimal", "> 8.00% Optimal", "> 12.00% High Efficiency", "< 1.00 Low Leverage Risk", "> 1.20 Cash Soundness", "< 1.00 Low Beta Defensive", "< 1.50 Fair Pricing Growth"]
+                    }
+                    st.table(pd.DataFrame(factor_data))
+                    
+                    # Core Health Diagnostics Warning Cards
+                    st.markdown("### 🔍 Risk Allocation Signals")
+                    c1, c2 = st.columns(2)
+                    with c1:
+                        if debt_to_equity and debt_to_equity > 100:
+                            st.warning("⚠️ **Leverage Alert:** Corporate Debt-to-Equity exceeds 1.0. Balance sheet is heavily leveraged.")
+                        else:
+                            st.success("✅ **Balance Sheet Health:** Long-term liability metrics are securely structured.")
+                    with c2:
+                        if roe and roe > 0.15:
+                            st.success("✅ **Profit Machine Engine:** Return on Equity meets tier-1 institution targets (>15%).")
+                        else:
+                            st.info("ℹ️ **Capital Efficiency Warning:** Asset yields moderate capital velocity returns on investor equity.")
+
+                # ==========================================
+                # TAB 3: VOLATILITY & PIVOT TARGETS (NEW ADVANCED TOOL)
+                # ==========================================
+                with tab3:
+                    st.subheader("📐 Intraday Pivot Target Framework & Volatility Ranges")
+                    st.write("Mathematical execution targets calculated using previous complete close distributions.")
+
+                    # Calculate Pivot Points from last historical trading metrics row
+                    last_day = df.iloc[-1]
+                    h_val = last_day['High']
+                    l_val = last_day['Low']
+                    c_val = last_day['Close']
+                    atr_val = last_day['ATR'] if 'ATR' in df.columns else (h_val - l_val)
+                    
+                    pivot = (h_val + l_val + c_val) / 3.0
+                    r1 = (2 * pivot) - l_val
+                    s1 = (2 * pivot) - h_val
+                    r2 = pivot + (h_val - l_val)
+                    s2 = pivot - (h_val - l_val)
+                    r3 = h_val + 2 * (pivot - l_val)
+                    s3 = l_val - 2 * (h_val - pivot)
+
+                    p_col1, p_col2 = st.columns(2)
+                    with p_col1:
+                        st.markdown("##### 📈 System Overhead Resistance Targets")
+                        st.markdown(f"""
+                        > **Resistance 3 (R3 Profit Target Matrix):** `₹{r3:,.2f}`  
+                        > **Resistance 2 (R2 Macro Ceiling):** `₹{r2:,.2f}`  
+                        > **Resistance 1 (R1 Minor Breakout):** `₹{r1:,.2f}`
+                        """)
+                        st.metric("🎯 Calculated Structural Central Pivot", f"₹{pivot:,.2f}")
+                        
+                    with p_col2:
+                        st.markdown("##### 📉 Downside Support Target Infrastructure")
+                        st.markdown(f"""
+                        > **Support 1 (S1 Liquidity Pool):** `₹{s1:,.2f}`  
+                        > **Support 2 (S2 System Floor):** `₹{s2:,.2f}`  
+                        > **Support 3 (S3 Deep Value Rebound):** `₹{s3:,.2f}`
+                        """)
+                        st.metric("📊 14-Day True Average Volatility Range (ATR)", f"₹{atr_val:.2f}")
+
+                # ==========================================
+                # TAB 4: INTRINSIC & FAIR VALUE CALCULATORS
+                # ==========================================
+                with tab4:
+                    st.subheader("💎 Valuation Models & Intrinsic Calculations")
+                    
+                    yf_pe = stock_info.get('trailingPE', 20.0)
+                    yf_eps = stock_info.get('trailingEps', 25.0)
+                    yf_bvps = stock_info.get('bookValue', 150.0)
+                    yf_mcap = stock_info.get('marketCap', latest_close * 1000000)
+                    yf_fcf = stock_info.get('freeCashflow', yf_mcap * 0.05)
+                    yf_shares = stock_info.get('sharesOutstanding', yf_mcap / latest_close)
+
+                    # Dynamic protection fallbacks if fields are parsed empty from Yahoo core dictionary
+                    if not yf_eps and yf_pe > 0: yf_eps = latest_close / yf_pe
+                    if not yf_pe and yf_eps > 0: yf_pe = latest_close / yf_eps
+
+                    st.markdown("### 📊 Live Multiples Pulled From Engine")
+                    h1, h2, h3 = st.columns(3)
+                    h1.metric("Engine Stream P/E Multiple", f"{yf_pe:.2f}")
+                    h2.metric("Engine Book Value Per Share", f"₹{yf_bvps:,.2f}")
+                    h3.metric("Engine Normalised EPS", f"₹{yf_eps:.2f}")
+
+                    st.markdown("---")
+                    calc_col1, calc_col2 = st.columns(2)
+
+                    with calc_col1:
+                        st.markdown("### 🏛️ Graham's Fair Value Model")
+                        eps_input = st.number_input("Earnings Per Share (EPS)", value=float(yf_eps), format="%.2f")
+                        bvps_input = st.number_input("Book Value Per Share (BVPS)", value=float(yf_bvps), format="%.2f")
+                        
+                        if eps_input > 0 and bvps_input > 0:
+                            graham_fair_value = np.sqrt(22.5 * eps_input * bvps_input)
+                            graham_mos = ((graham_fair_value - latest_close) / graham_fair_value) * 100
+                            st.markdown(f"#### Calculated Graham Value: **₹{graham_fair_value:,.2f}**")
+                            if graham_mos > 20:
+                                st.success(f"✅ **Undervalued:** Trading at a **{graham_mos:.1f}%** structural discount.")
+                            elif 0 <= graham_mos <= 20:
+                                st.info(f"💛 **Fair Value:** Margins match fair valuation limits (**{graham_mos:.1f}%**).")
+                            else:
+                                st.warning(f"⚠️ **Overvalued:** Price is **{abs(graham_mos):.1f}%** higher than model limits.")
+
+                    with calc_col2:
+                        st.markdown("### 🌀 Discounted Cash Flow (DCF) Model")
+                        fcf_input = st.number_input("Free Cash Flow (FCF in ₹)", value=float(yf_fcf))
+                        shares_input = st.number_input("Shares Outstanding", value=float(yf_shares))
+                        
+                        g_rate = st.slider("Expected Growth Rate (g) (%)", min_value=-5.0, max_value=40.0, value=12.0, step=0.5)
+                        d_rate = st.slider("Discount Rate (r) (%)", min_value=5.0, max_value=25.0, value=11.0, step=0.5)
+                        t_rate = st.slider("Terminal Growth Rate (gn) (%)", min_value=1.0, max_value=8.0, value=4.5, step=0.1)
+
+                        if d_rate <= t_rate:
+                            st.error("Execution Blunder: Discount Rate (r) must be configured higher than Terminal Rate.")
+                        else:
+                            projected_fcf = []
+                            present_values = []
+                            temp_fcf = fcf_input
+                            for year in range(1, 6):
+                                temp_fcf = temp_fcf * (1 + (g_rate / 100))
+                                discount_factor = 1 / ((1 + (d_rate / 100)) ** year)
+                                present_values.append(temp_fcf * discount_factor)
+                                
+                            sum_pv_fcf = sum(present_values)
+                            terminal_value = (temp_fcf * (1 + (t_rate / 100))) / ((d_rate - t_rate) / 100)
+                            pv_terminal_value = terminal_value / ((1 + (d_rate / 100)) ** 5)
+                            
+                            dcf_fair_value = (sum_pv_fcf + pv_terminal_value) / shares_input
+                            dcf_mos = ((dcf_fair_value - latest_close) / dcf_fair_value) * 100
+                            
+                            st.markdown(f"#### Calculated DCF Fair Value: **₹{dcf_fair_value:,.2f}**")
+                            if dcf_mos > 20:
+                                st.success(f"✅ **Intrinsic Disconnect:** **{dcf_mos:.1f}%** margin discount calculated.")
+                            else:
+                                st.warning(f"⚠️ **Premium Pricing:** Value trades **{abs(dcf_mos):.1f}%** over intrinsic models.")
+
+                # ==========================================
+                # TAB 5: ENGINE BACKTESTER
+                # ==========================================
+                with tab5:
+                    st.subheader("Historical Strategy Simulation Run")
                     b_col1, b_col2 = st.columns(2)
                     with b_col1:
-                        strategy_choice = st.selectbox("Select Strategy to Backtest:", ["SMA Crossover (50 vs 200)", "MACD Line Crossover"])
+                        strategy_choice = st.selectbox("Select Core Vector:", ["SMA Crossover (50 vs 200)", "MACD Line Crossover"])
                     with b_col2:
-                        initial_capital = st.number_input("Starting Capital (₹)", min_value=100, max_value=10000000, value=100000, step=1000)
+                        initial_capital = st.number_input("Starting Capital Allocation (₹)", min_value=100, max_value=10000000, value=100000)
                     
                     bt_df = df.dropna(subset=['SMA_200']).copy() if strategy_choice == "SMA Crossover (50 vs 200)" else df.dropna(subset=['Signal_Line']).copy()
                     
                     if bt_df.empty:
-                        st.error("Insufficient historical data to execute backtest.")
+                        st.error("Insufficient historical lookback range available to execute logic calculations.")
                     else:
-                        position = 0
-                        cash = initial_capital
-                        shares = 0
-                        portfolio_history = []
-                        trade_count = 0
+                        position, cash, shares, portfolio_history, trade_count = 0, initial_capital, 0, [], 0
                         
                         for date, row in bt_df.iterrows():
                             price = row['Close']
@@ -300,177 +452,20 @@ if yfinance_ticker:
                             portfolio_history.append(cash + (shares * price))
                             
                         bt_df['Strategy_Value'] = portfolio_history
-                        bh_shares = initial_capital / bt_df['Close'].iloc[0]
-                        bt_df['Buy_Hold_Value'] = bh_shares * bt_df['Close']
+                        bt_df['Buy_Hold_Value'] = (initial_capital / bt_df['Close'].iloc[0]) * bt_df['Close']
                         
                         final_strategy_val = bt_df['Strategy_Value'].iloc[-1]
                         final_bh_val = bt_df['Buy_Hold_Value'].iloc[-1]
-                        strat_return = ((final_strategy_val - initial_capital) / initial_capital) * 100
-                        bh_return = ((final_bh_val - initial_capital) / initial_capital) * 100
                         
-                        m1, m2, m3, m4 = st.columns(4)
-                        m1.metric("Strategy Final Value", f"₹{final_strategy_val:,.2f}")
-                        m2.metric("Strategy Total Return", f"{strat_return:.2f}%")
-                        m3.metric("Buy & Hold Return", f"{bh_return:.2f}%")
-                        m4.metric("Trades Executed", f"{trade_count}")
-                        
-                        st.markdown("---")
-                        if final_strategy_val > final_bh_val:
-                            st.success(f"🏆 **Victory!** {strategy_choice} beat buy-and-hold by **{strat_return - bh_return:.2f}%**.")
-                        else:
-                            st.warning(f"⚠️ **Market Beats Strategy.** Buying and holding would have yielded **{bh_return - strat_return:.2f}%** more.")
+                        m1, m2, m3 = st.columns(3)
+                        m1.metric("Strategy Terminal Worth", f"₹{final_strategy_val:,.2f}")
+                        m2.metric("Strategy Pure ROI", f"{((final_strategy_val - initial_capital)/initial_capital)*100:.2f}%")
+                        m3.metric("Buy & Hold Baseline Return", f"{((final_bh_val - initial_capital)/initial_capital)*100:.2f}%")
                         
                         equity_fig = go.Figure()
-                        equity_fig.add_trace(go.Scatter(x=bt_df.index, y=bt_df['Strategy_Value'], line=dict(color='green', width=2), name='Strategy'))
-                        equity_fig.add_trace(go.Scatter(x=bt_df.index, y=bt_df['Buy_Hold_Value'], line=dict(color='grey', width=1.5, dash='dash'), name='Buy & Hold'))
-                        equity_fig.update_layout(height=400, margin=dict(l=0, r=0, t=10, b=0), yaxis_title="Portfolio Value (₹)")
+                        equity_fig.add_trace(go.Scatter(x=bt_df.index, y=bt_df['Strategy_Value'], line=dict(color='green', width=2), name='Strategy Curves'))
+                        equity_fig.add_trace(go.Scatter(x=bt_df.index, y=bt_df['Buy_Hold_Value'], line=dict(color='grey', width=1, dash='dash'), name='Benchmark Curves'))
                         st.plotly_chart(equity_fig, use_container_width=True)
 
-                # ==========================================
-                # TAB 3: VOLATILITY & RISK METRICS
-                # ==========================================
-                with tab3:
-                    st.subheader("Deep Risk Analysis Profile")
-                    
-                    df['Daily_Return'] = df['Close'].pct_change()
-                    daily_vol = df['Daily_Return'].std()
-                    ann_vol = daily_vol * np.sqrt(252) * 100
-                    
-                    rolling_max = df['Close'].cummax()
-                    drawdowns = (df['Close'] - rolling_max) / rolling_max
-                    max_drawdown = drawdowns.min() * 100
-                    
-                    rc1, rc2, rc3 = st.columns(3)
-                    vol_class = "Low Risk" if ann_vol < 15 else "Moderate Risk" if ann_vol < 30 else "High Risk"
-                    rc1.metric("Annualized Volatility", f"{ann_vol:.2f}%", vol_class, delta_color="off")
-                    rc2.metric("Maximum Historical Drawdown", f"{max_drawdown:.2f}%", "Worst-case drop from absolute peak", delta_color="inverse")
-                    rc3.metric("Standard Deviation of Price", f"₹{df['Close'].std():.2f}")
-
-                # ==========================================
-                # TAB 4: INTRINSIC & FAIR VALUE CALCULATORS
-                # ==========================================
-                with tab4:
-                    st.subheader("💎 Valuation Models & Intrinsic Calculations")
-                    st.info("📡 **Data Source:** Powered directly via Yahoo Finance Core Engine API API.")
-                    
-                    # 1. PARSE CORE YAHOO FINANCE VALUES
-                    cmp = float(latest_close)
-                    yf_pe = stock_info.get('trailingPE')
-                    yf_eps = stock_info.get('trailingEps')
-                    yf_bvps = stock_info.get('bookValue')
-                    yf_mcap = stock_info.get('marketCap')
-                    yf_fcf = stock_info.get('freeCashflow')
-                    yf_shares = stock_info.get('sharesOutstanding')
-
-                    # 2. DISCOVERY LOGIC FALLBACKS (In case individual object properties are missing)
-                    if not yf_eps and yf_pe and yf_pe > 0:
-                        yf_eps = cmp / yf_pe
-                    elif not yf_eps:
-                        yf_eps = 25.0
-
-                    if not yf_pe and yf_eps > 0:
-                        yf_pe = cmp / yf_eps
-                    elif not yf_pe:
-                        yf_pe = 20.0
-
-                    if not yf_bvps:
-                        yf_bvps = 150.0
-
-                    if not yf_mcap:
-                        yf_mcap = cmp * (yf_shares if yf_shares else 100000000)
-
-                    if not yf_shares:
-                        yf_shares = yf_mcap / cmp
-
-                    if not yf_fcf:
-                        yf_fcf = yf_mcap * 0.05  # Standard 5% Free Cash Flow Proxy fallback
-
-                    # 3. LIVE HUD DISPLAY PANEL
-                    st.markdown("### 📊 Yahoo Finance Raw Stream Overview")
-                    h1, h2, h3, h4 = st.columns(4)
-                    h1.metric("API Trailing P/E", f"{yf_pe:.2f}" if yf_pe else "N/A")
-                    h2.metric("API Book Value (BVPS)", f"₹{yf_bvps:,.2f}" if yf_bvps else "N/A")
-                    h3.metric("API Trailing EPS", f"₹{yf_eps:.2f}" if yf_eps else "N/A")
-                    h4.metric("Current Market Price (CMP)", f"₹{cmp:,.2f}")
-
-                    st.markdown("---")
-                    calc_col1, calc_col2 = st.columns(2)
-
-                    # --- MODEL A: BENJAMIN GRAHAM VALUE (FULLY EDITABLE OVERRIDE) ---
-                    with calc_col1:
-                        st.markdown("### 🏛 *Graham's Fair Value Model*")
-                        st.write("Adjust values below instantly if Yahoo's feed displays unadjusted/stale records:")
-                        
-                        eps_input = st.number_input(
-                            "Earnings Per Share (EPS)", 
-                            value=float(yf_eps), 
-                            format="%.2f",
-                            help="Edit this field directly to update valuation calculation."
-                        )
-                        bvps_input = st.number_input(
-                            "Book Value Per Share (BVPS)", 
-                            value=float(yf_bvps), 
-                            format="%.2f",
-                            help="Edit this field directly to update valuation calculation."
-                        )
-                        
-                        if eps_input > 0 and bvps_input > 0:
-                            graham_fair_value = np.sqrt(22.5 * eps_input * bvps_input)
-                            graham_mos = ((graham_fair_value - cmp) / graham_fair_value) * 100
-                            
-                            st.markdown(f"#### Calculated Graham Value: **₹{graham_fair_value:,.2f}**")
-                            if graham_mos > 20:
-                                st.success(f"✅ **Undervalued:** Stock trades at a **{graham_mos:.1f}%** discount to Graham Value.")
-                            elif 0 <= graham_mos <= 20:
-                                st.info(f"💛 **Fairly Valued:** Margin of Safety is tight (**{graham_mos:.1f}%**).")
-                            else:
-                                st.warning(f"⚠️ **Overvalued:** Trades at a **{abs(graham_mos):.1f}%** premium.")
-                        else:
-                            st.warning("Graham model requires positive Earnings and positive Book Value metrics.")
-
-                    # --- MODEL B: DISCOUNTED CASH FLOW (DCF) ---
-                    with calc_col2:
-                        st.markdown("### 🌀 Discounted Cash Flow (DCF) Model")
-                        st.write("Project and discount company cash flows.")
-                        
-                        fcf_input = st.number_input("Free Cash Flow (FCF in ₹)", value=float(yf_fcf))
-                        shares_input = st.number_input("Shares Outstanding", value=float(yf_shares))
-                        
-                        g_rate = st.slider("Expected Growth Rate (g) (%)", min_value=-5.0, max_value=40.0, value=12.0, step=0.5)
-                        d_rate = st.slider("Discount Rate (r) (%)", min_value=5.0, max_value=25.0, value=11.0, step=0.5)
-                        t_rate = st.slider("Terminal Growth Rate (gn) (%)", min_value=1.0, max_value=8.0, value=4.5, step=0.1)
-
-                        if d_rate <= t_rate:
-                            st.error("Error: Discount Rate (r) must be strictly higher than the Terminal Growth Rate (gn).")
-                        else:
-                            projected_fcf = []
-                            discount_factors = []
-                            present_values = []
-                            
-                            temp_fcf = fcf_input
-                            for year in range(1, 6):
-                                temp_fcf = temp_fcf * (1 + (g_rate / 100))
-                                projected_fcf.append(temp_fcf)
-                                
-                                discount_factor = 1 / ((1 + (d_rate / 100)) ** year)
-                                discount_factors.append(discount_factor)
-                                present_values.append(temp_fcf * discount_factor)
-                                
-                            sum_pv_fcf = sum(present_values)
-                            terminal_value = (projected_fcf[-1] * (1 + (t_rate / 100))) / ((d_rate - t_rate) / 100)
-                            pv_terminal_value = terminal_value / ((1 + (d_rate / 100)) ** 5)
-                            
-                            total_intrinsic_val = sum_pv_fcf + pv_terminal_value
-                            dcf_fair_value = total_intrinsic_val / shares_input
-                            dcf_mos = ((dcf_fair_value - cmp) / dcf_fair_value) * 100
-                            
-                            st.markdown(f"#### Calculated DCF Fair Value: **₹{dcf_fair_value:,.2f}**")
-                            if dcf_mos > 20:
-                                st.success(f"✅ **Undervalued:** Trading at a **{dcf_mos:.1f}%** Margin of Safety.")
-                            elif 0 <= dcf_mos <= 20:
-                                st.info(f"💛 **Fairly Valued:** Margin of Safety is minor (**{dcf_mos:.1f}%**).")
-                            else:
-                                st.warning(f"⚠️ **Overvalued:** Price is **{abs(dcf_mos):.1f}%** above estimated DCF value.")
-
         except Exception as e:
-            st.error(f"Could not load data for analysis: {e}")
+            st.error(f"Global runtime error compiling analytics frames: {e}")
