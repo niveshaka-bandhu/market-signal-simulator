@@ -68,7 +68,7 @@ with st.container(border=True):
         
     with ctrl_col3:
         raw_ticker_input = st.text_input(
-            "🔍 Search Indian Ticker (e.g., RELIANCE, TCS, HDFCBANK):", 
+            "🔍 Search Indian Ticker (e.g., RELIANCE, TCS, HDFCBANK, LICI):", 
             "RELIANCE"
         ).upper().strip()
 
@@ -372,18 +372,20 @@ if yfinance_ticker:
                         calc_col1, calc_col2 = st.columns(2)
                         with calc_col1:
                             st.write("### 🏛️ Graham Valuation Model")
-                            eps_input = st.number_input("EPS", value=float(yf_eps) if yf_eps else 10.0, format="%.2f", key="core_eps")
-                            bvps_input = st.number_input("BVPS", value=float(yf_bvps) if yf_bvps else 100.0, format="%.2f", key="core_bvps")
+                            # FIX: Dynamically keying widget by yfinance_ticker forces refresh when company changes
+                            eps_input = st.number_input("EPS", value=float(yf_eps) if yf_eps else 10.0, format="%.2f", key=f"eps_{yfinance_ticker}")
+                            bvps_input = st.number_input("BVPS", value=float(yf_bvps) if yf_bvps else 100.0, format="%.2f", key=f"bvps_{yfinance_ticker}")
                             if eps_input > 0 and bvps_input > 0:
                                 g_val = np.sqrt(22.5 * eps_input * bvps_input)
                                 st.markdown(f"Calculated Graham Value: **₹{g_val:,.2f}**")
 
                         with calc_col2:
                             st.write("### 🌀 Multi-Stage DCF Model (₹ Crores)")
-                            fcf_input = st.number_input("FCF (₹ Crores)", value=float(yf_fcf_crores) if yf_fcf_crores else 500.0, format="%.2f", key="core_fcf")
-                            shares_input = st.number_input("Shares Out (Crores)", value=float(yf_shares_crores) if yf_shares_crores else 50.0, format="%.2f", key="core_sh")
-                            g_rate = st.slider("Growth Rate (%)", -5.0, 40.0, 12.0, 0.5, key="core_g")
-                            d_rate = st.slider("Discount Rate (%)", 5.0, 25.0, 11.0, 0.5, key="core_d")
+                            # FIX: Dynamically keying widget by yfinance_ticker forces refresh when company changes
+                            fcf_input = st.number_input("FCF (₹ Crores)", value=float(yf_fcf_crores) if yf_fcf_crores else 500.0, format="%.2f", key=f"fcf_{yfinance_ticker}")
+                            shares_input = st.number_input("Shares Out (Crores)", value=float(yf_shares_crores) if yf_shares_crores else 50.0, format="%.2f", key=f"sh_{yfinance_ticker}")
+                            g_rate = st.slider("Growth Rate (%)", -5.0, 40.0, 12.0, 0.5, key=f"g_{yfinance_ticker}")
+                            d_rate = st.slider("Discount Rate (%)", 5.0, 25.0, 11.0, 0.5, key=f"d_{yfinance_ticker}")
                             
                             if d_rate > 4.5:
                                 p_v = [fcf_input * ((1 + (g_rate / 100)) ** i) / ((1 + (d_rate / 100)) ** i) for i in range(1, 6)]
@@ -432,8 +434,23 @@ if yfinance_ticker:
 
                     with quant_tab2:
                         st.write("### 👥 Competitor Evaluation Matrix")
-                        default_peers = "INFY, WIPRO, HCLTECH" if "TCS" in yfinance_ticker else "RELIANCE.NS, ONGC.NS, BPCL.NS"
-                        peer_input = st.text_input("Enter Peer Symbols (Comma Separated):", default_peers)
+                        # Sector intelligent default peers
+                        sector = stock_info.get('sector', '')
+                        if 'Technology' in sector or 'Software' in sector:
+                            default_peers = "INFY.NS, WIPRO.NS, HCLTECH.NS, TCS.NS"
+                        elif 'Financial' in sector or 'Bank' in sector:
+                            default_peers = "HDFCBANK.NS, ICICIBANK.NS, SBIN.NS, KOTAKBANK.NS"
+                        elif 'Energy' in sector or 'Utilities' in sector:
+                            default_peers = "RELIANCE.NS, ONGC.NS, BPCL.NS, IOC.NS"
+                        elif 'Auto' in sector:
+                            default_peers = "TATAMOTORS.NS, MARUTI.NS, M&M.NS"
+                        elif 'Healthcare' in sector or 'Pharma' in sector:
+                            default_peers = "SUNPHARMA.NS, CIPLA.NS, DRREDDY.NS"
+                        else:
+                            default_peers = "RELIANCE.NS, TCS.NS, HDFCBANK.NS"
+
+                        # FIX: Dynamic keying ensures text input resets to new sector defaults when ticker changes
+                        peer_input = st.text_input("Enter Peer Symbols (Comma Separated):", default_peers, key=f"peer_input_{yfinance_ticker}")
                         
                         peer_symbols = [p.strip().upper() for p in peer_input.split(",") if p.strip()]
                         if yfinance_ticker not in peer_symbols:
